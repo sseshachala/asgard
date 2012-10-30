@@ -135,10 +135,7 @@ grails.project.dependency.resolution = {
             )
         }
 
-        test("org.spockframework:spock-grails-support:0.6-groovy-1.8") {
-            excludes 'spock-core'
-        }
-        test 'org.spockframework:spock-core:0.7-groovy-2.0'
+        test "org.spockframework:spock-grails-support:0.7-groovy-2.0"
 
         // Optional dependency for Spock to support mocking objects without a parameterless constructor.
         test 'org.objenesis:objenesis:1.2'
@@ -150,8 +147,8 @@ grails.project.dependency.resolution = {
         compile ":context-param:1.0"
         compile ':shiro:1.1.4'
 
-        test (':spock:0.6') {
-            excludes 'spock-grails-support'
+        test(":spock:0.7") {
+          exclude "spock-grails-support"
         }
 
         test ':code-coverage:1.2.5'
