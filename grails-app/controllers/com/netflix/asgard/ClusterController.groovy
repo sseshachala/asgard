@@ -23,6 +23,7 @@ import com.amazonaws.services.elasticloadbalancing.model.LoadBalancerDescription
 import com.netflix.asgard.model.AutoScalingGroupData
 import com.netflix.asgard.model.AutoScalingProcessType
 import com.netflix.asgard.model.GroupedInstance
+import com.netflix.asgard.model.InstancePriceType
 import com.netflix.asgard.model.ScalingPolicyData
 import com.netflix.asgard.model.SubnetTarget
 import com.netflix.asgard.model.Subnets
@@ -51,6 +52,7 @@ class ClusterController {
     def configService
     def mergedInstanceService
     def pushService
+    def spotInstanceRequestService
     def taskService
 
     def index = { redirect(action: 'list', params: params) }
@@ -186,11 +188,11 @@ class ClusterController {
             String lcName = lastGroup.launchConfigurationName
             LaunchConfiguration lastLaunchConfig = awsAutoScalingService.getLaunchConfiguration(userContext, lcName)
             String appName = Relationships.appNameFromGroupName(name)
-            List<String> lastSecurityGroups = lastLaunchConfig.securityGroups
-            List<String> securityGroups = Requests.ensureList(params.selectedSecurityGroups ?: lastSecurityGroups)
-            List<String> selectedZones = Requests.ensureList(params.selectedZones ?: lastGroup.availabilityZones)
-            List<String> termPolicies = Requests.ensureList(params.terminationPolicy ?: lastGroup.terminationPolicies)
+            List<String> securityGroups = Requests.ensureList(params.selectedSecurityGroups)
+            List<String> termPolicies = Requests.ensureList(params.terminationPolicy)
             List<String> loadBalancerNames = Requests.ensureList(params.selectedLoadBalancers)
+            // Availability zones default to the last group's value since this field is required.
+            List<String> selectedZones = Requests.ensureList(params.selectedZones) ?: lastGroup.availabilityZones
             String azRebalance = params.azRebalance
             boolean lastRebalanceSuspended = lastGroup.isProcessSuspended(AutoScalingProcessType.AZRebalance)
             boolean azRebalanceSuspended = (azRebalance == null) ? lastRebalanceSuspended : (azRebalance == 'disabled')
@@ -207,6 +209,13 @@ class ClusterController {
                 flash.message = "Due to a Eureka limitation, you must enable traffic and/or wait for health checks"
                 redirect(action: 'show', params: [id: name])
                 return
+            }
+            String instanceType = params.instanceType ?: lastLaunchConfig.instanceType
+            String spotPrice = null
+            if (!params.pricing) {
+                spotPrice = lastLaunchConfig.spotPrice
+            } else if (params.pricing == InstancePriceType.SPOT.name()) {
+                spotPrice = spotInstanceRequestService.recommendSpotPrice(userContext, instanceType)
             }
 
             final String nextGroupName = Relationships.buildNextAutoScalingGroupName(lastGroup.autoScalingGroupName)
@@ -236,8 +245,14 @@ class ClusterController {
             String subnetPurpose = params.subnetPurpose
             String vpcZoneIdentifier = subnets.constructNewVpcZoneIdentifierForPurposeAndZones(subnetPurpose,
                     selectedZones)
-            if (params.noDefaults != 'true') {
+            String iamInstanceProfile = params.iamInstanceProfile ?: null
+            if (params.noOptionalDefaults != 'true') {
+                securityGroups = securityGroups ?: lastLaunchConfig.securityGroups
+                termPolicies = termPolicies ?: lastGroup.terminationPolicies
                 loadBalancerNames = loadBalancerNames ?: lastGroup.loadBalancerNames
+                vpcZoneIdentifier = vpcZoneIdentifier ?: subnets.constructNewVpcZoneIdentifierForZones(lastGroup.vpcZoneIdentifier,
+                        selectedZones)
+                iamInstanceProfile = iamInstanceProfile ?: lastLaunchConfig.iamInstanceProfile
             }
             GroupCreateOptions options = new GroupCreateOptions(
                     common: new CommonPushOptions(
@@ -247,7 +262,7 @@ class ClusterController {
                             appName: appName,
                             env: grailsApplication.config.cloud.accountName,
                             imageId: params.imageId ?: lastLaunchConfig.imageId,
-                            instanceType: params.instanceType ?: lastLaunchConfig.instanceType,
+                            instanceType: instanceType,
                             groupName: nextGroupName,
                             securityGroups: securityGroups,
                             maxStartupRetries: params.maxStartupRetries?.toInteger() ?: 5
@@ -262,15 +277,15 @@ class ClusterController {
                     terminationPolicies: termPolicies,
                     batchSize: params.batchSize as Integer ?: GroupResizeOperation.DEFAULT_BATCH_SIZE,
                     loadBalancerNames: loadBalancerNames,
-                    iamInstanceProfile: params.iamInstanceProfile ?: null,
+                    iamInstanceProfile: iamInstanceProfile,
                     keyName: params.keyName ?: lastLaunchConfig.keyName,
-                    availabilityZones: selectedZones ?: lastGroup.availabilityZones,
+                    availabilityZones: selectedZones,
                     zoneRebalancingSuspended: azRebalanceSuspended,
                     scalingPolicies: newScalingPolicies,
                     scheduledActions: newScheduledActions,
                     vpcZoneIdentifier: vpcZoneIdentifier,
+                    spotPrice: spotPrice
             )
-
             def operation = pushService.startGroupCreate(options)
             flash.message = "${operation.task.name} has been started."
             redirectToTask(operation.taskId)
