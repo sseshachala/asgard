@@ -44,10 +44,10 @@ class SecurityGroupDslSpec extends Specification {
 
         expect:
         SecurityGroupDsl.config {
-            wopr(7101, 7102) >> norad
-            joshua(7101, 7102) >> [wopr, globalthermonuclearwar, tictactoe]
-            modem(8080, 8080) >> joshua
-            falken(7101, 7102) >> joshua
+            wopr(7101, 7102) addAsIngress(norad)
+            joshua(7101, 7102) addAsIngress([wopr, globalthermonuclearwar, tictactoe])
+            modem(8080, 8080) addAsIngress(joshua)
+            falken(7101, 7102) addAsIngress(joshua)
         } == expectedSecurityGroups
     }
 
@@ -61,7 +61,7 @@ class SecurityGroupDslSpec extends Specification {
 
         expect:
         SecurityGroupDsl.config {
-            wopr(7101, 7102) << norad
+            wopr(7101, 7102) addAsEgress norad
         } == expectedSecurityGroups
     }
 
@@ -77,8 +77,8 @@ class SecurityGroupDslSpec extends Specification {
 
         expect:
         SecurityGroupDsl.config {
-            wopr(7101, 7102) >> norad
-            wopr(7201, 7202) << norad
+            wopr(7101, 7102) addAsIngress norad
+            wopr(7201, 7202) addAsEgress norad
         } == expectedSecurityGroups
     }
 
