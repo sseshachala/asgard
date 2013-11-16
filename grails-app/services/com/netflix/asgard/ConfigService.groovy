@@ -27,6 +27,7 @@ class ConfigService {
     static transactional = false
 
     def grailsApplication
+    def flagService
 
     /**
      * Gets the most commonly used namespace for Amazon CloudWatch metrics used for auto scaling policies. If not
@@ -36,6 +37,55 @@ class ConfigService {
      */
     String getDefaultMetricNamespace() {
         grailsApplication.config.cloud?.defaultMetricNamespace ?: 'AWS/EC2'
+    }
+
+    /**
+     * @return custom (non AWS) metric namespaces mapped to the dimensions they support
+     */
+    Map<String, Collection<String>> customMetricNamespacesToDimensions() {
+        grailsApplication.config.cloud?.customMetricNamespacesToDimensions ?: [:]
+    }
+
+    /**
+     * @return true if emails are enabled for sending system errors to Asgard admins, false otherwise
+     */
+    boolean isSystemEmailEnabled() {
+        grailsApplication.config.email.systemEnabled
+    }
+
+    /**
+     * @return true if emails are enabled for sending notifications to app owners about cloud changes, false otherwise
+     */
+    boolean isUserEmailEnabled() {
+        grailsApplication.config.email.userEnabled
+    }
+
+    /**
+     * @return the Simple Mail Transport Protocol (SMTP) host that should be used for sending emails
+     */
+    String getSmtpHost() {
+        grailsApplication.config.email.smtpHost ?: null
+    }
+
+    /**
+     * @return the "from" address for sending user emails
+     */
+    String getFromAddressForEmail() {
+        grailsApplication.config.email.fromAddress ?: null
+    }
+
+    /**
+     * @return the email address that should receive system-level error email alerts
+     */
+    String getSystemEmailAddress() {
+        grailsApplication.config.email.systemEmailAddress ?: null
+    }
+
+    /**
+     * @return the common beginning of all system error email subjects
+     */
+    String getErrorEmailSubjectStart() {
+        grailsApplication.config.email.errorSubjectStart ?: null
     }
 
     /**
@@ -58,14 +108,51 @@ class ConfigService {
     }
 
     /**
+     * Gets the maximum number of times to perform a DNS lookup without receiving a new result. This is useful to tune
+     * when there is a service dependency like Eureka that may have DNS configuration only returning one random IP
+     * address for each individual DNS lookup. Depending on the number of expected IP addresses, some Asgard
+     * installations may be better off with a higher or lower number of DNS attempts before giving up and accepting
+     * the currently gathered set of IP addresses.
+     *
+     * @return the maximum number of times to perform a DNS lookup without receiving a new result
+     */
+    Integer getMaxConsecutiveDnsLookupsWithoutNewResult() {
+        grailsApplication.config.dns?.maxConsecutiveDnsLookupsWithoutNewResult ?: 10
+    }
+
+    /**
+     * @return number of milliseconds to wait between DNS calls
+     */
+    int getDnsThrottleMillis() {
+        grailsApplication.config.dns?.throttleMillis ?: 50
+    }
+
+    /**
      * Finds the Discovery server URL for the specified region, or null if there isn't one
      *
      * @param region the region in which to look for a Discovery URL
      * @return the Discovery server URL for the specified region, or null if there isn't one
      */
     String getRegionalDiscoveryServer(Region region) {
-        Map<Region, String> regionsToDiscoveryServers = grailsApplication.config.eureka?.regionsToServers
-        regionsToDiscoveryServers ? regionsToDiscoveryServers[region] : null
+        if (isOnline()) {
+            Map<Region, String> regionsToDiscoveryServers = grailsApplication.config.eureka?.regionsToServers
+            return regionsToDiscoveryServers ? regionsToDiscoveryServers[region] : null
+        }
+        null
+    }
+
+    /**
+     * Finds the PlatformService server URL for the specified region, or null if there isn't one
+     *
+     * @param region the region in which to look for a PlatformService URL
+     * @return the PlatformService server URL for the specified region, or null if there isn't one
+     */
+    String getRegionalPlatformServiceServer(Region region) {
+        if (isOnline()) {
+            Map<Region, String> regionsToPlatformServiceServers = grailsApplication.config.platform?.regionsToServers
+            return regionsToPlatformServiceServers ? regionsToPlatformServiceServers[region] : null
+        }
+        null
     }
 
     /**
@@ -145,11 +232,7 @@ class ConfigService {
      *         to reduce the number of large, simultaneous data retrieval calls to cloud APIs
      */
     boolean getUseJitter() {
-        Boolean result = grailsApplication.config.thread?.useJitter
-        if (result == null) {
-            return true
-        }
-        result
+        grailsApplication.config.thread?.useJitter
     }
 
     /**
@@ -204,6 +287,27 @@ class ConfigService {
      */
     String getDefaultKeyName() {
         grailsApplication.config.cloud?.defaultKeyName ?: ''
+    }
+
+    /**
+     * @return the name of the Amazon Simple Workflow domain that should be used for automation
+     */
+    String getSimpleWorkflowDomain() {
+        grailsApplication.config?.workflow?.domain ?: 'asgard'
+    }
+
+    /**
+     * @return the name of the Amazon Simple Workflow task list that should be used for automation
+     */
+    String getSimpleWorkflowTaskList() {
+        grailsApplication.config?.workflow?.taskList ?: 'primary'
+    }
+
+    /**
+     * @return the number of days to retain Amazon Simple Workflow closed executions
+     */
+    Integer getWorkflowExecutionRetentionPeriodInDays() {
+        grailsApplication.config?.workflow?.workflowExecutionRetentionPeriodInDays ?: 90
     }
 
     /**
@@ -282,15 +386,29 @@ class ConfigService {
         grailsApplication.config.cloud?.applicationsDomain ?: 'CLOUD_APPLICATIONS'
     }
 
+    /**
+     * @return the first part of all the environment variable names to be inserted into user data
+     */
     String getUserDataVarPrefix() {
         grailsApplication.config.cloud?.userDataVarPrefix ?: 'CLOUD_'
     }
 
     /**
-     * @return Name of the plugins to the implementing beans, ex. [userDataProvider: 'perforceUserDataProvider']
+     * @return the base server URL for generating links to the current Asgard instance in outgoing emails
      */
-    Map<String, Object> getPluginNamesToBeanNames() {
-        grailsApplication.config.plugin ?: [:]
+    String getLinkCanonicalServerUrl() {
+        grailsApplication.config.link?.canonicalServerUrl ?: grailsApplication.config.grails.serverURL ?:
+                'http://localhost:8080'
+    }
+
+    /**
+     * @param the plugin name
+     * @return the bean names used for this plugin implementation, null if none configured. This can be either a single
+     *          string or a list of strings depending on the plugin
+     */
+    Object getBeanNamesForPlugin(String pluginName) {
+        Object beanNames = grailsApplication.config.plugin[pluginName]
+        beanNames ?: null
     }
 
     /**
@@ -308,21 +426,28 @@ class ConfigService {
     }
 
     /**
-     * @return Maximum time in miliseconds for threads to wait for a connection from the http connection pool
+     * @return maximum time in milliseconds for remote REST calls to wait before timing out
+     */
+    int getRestClientTimeoutMillis() {
+        grailsApplication.config.rest?.timeoutMillis ?: 2 * 1000
+    }
+
+    /**
+     * @return maximum time in milliseconds for threads to wait for a connection from the http connection pool
      */
     long getHttpConnPoolTimeout() {
         grailsApplication.config.httpConnPool?.timeout ?: 50 * 1000
     }
 
     /**
-     * @return Maximum size of the http connection pool
+     * @return maximum size of the http connection pool
      */
     int getHttpConnPoolMaxSize() {
         grailsApplication.config.httpConnPool?.maxSize ?: 50
     }
 
     /**
-     * @return Maximum number of connections in the connection pool per host.
+     * @return maximum number of connections in the connection pool per host
      */
     int getHttpConnPoolMaxForRoute() {
         grailsApplication.config.httpConnPool?.maxSize ?: 5
@@ -354,7 +479,7 @@ class ConfigService {
 
     /**
      * Gets the port number (as a String) used in constructing Eureka URLs. The port varies depending on how Eureka
-     * or is configured.
+     * is configured.
      *
      * @return the port for constructing URLs to make eureka calls
      */
@@ -363,14 +488,38 @@ class ConfigService {
     }
 
     /**
-     * @return Default Security Groups.
+     * Gets the port number (as a String) used in constructing PlatformService URLs. The port varies depending on how
+     * PlatformService is configured.
+     *
+     * @return the port for constructing URLs to make PlatformService calls
+     */
+    String getPlatformServicePort() {
+        grailsApplication.config.platform?.port ?: '80'
+    }
+
+    /**
+     * @return the URL of the JavaScript file to import when integrating with the Blesk notification system
+     */
+    String getBleskJavaScriptUrl() {
+        grailsApplication.config.blesk?.javaScriptUrl ?: null
+    }
+
+    /**
+     * @return the URL from which Blesk should pull notification data
+     */
+    String getBleskDataUrl() {
+        grailsApplication.config.blesk?.dataUrl ?: null
+    }
+
+    /**
+     * @return the names of the security groups that should be applied to all non-VPC deployments
      */
     List<String> getDefaultSecurityGroups() {
         grailsApplication.config.cloud?.defaultSecurityGroups ?: []
     }
 
     /**
-     * @return Default VPC Security Groups.
+     * @return the names of the security groups that should be applied to all VPC deployments
      */
     List<String> getDefaultVpcSecurityGroupNames() {
         grailsApplication.config.cloud?.defaultVpcSecurityGroupNames ?: []
@@ -402,70 +551,77 @@ class ConfigService {
     }
 
     /**
-     * @return File name containing a list of keys to use for hashing api keys.
+     * @return file name containing a list of keys to use for hashing api keys
      */
     String getApiEncryptionKeyFileName() {
         grailsApplication.config.secret?.apiEncryptionKeyFileName ?: null
     }
 
     /**
-     * @return Number of days a newly generated api key will be active for
+     * @return number of days a newly generated api key will be active for
      */
     int getApiTokenExpirationDays() {
         grailsApplication.config.security?.apiToken?.expirationDays ?: 90
     }
 
     /**
-     * @return Number of days before API key expiration to send an email warning
+     * @return number of days before API key expiration to send an email warning
      */
     int getApiTokenExpiryWarningThresholdDays() {
         grailsApplication.config.security?.apiToken?.expiryWarningThresholdDays ?: 7
     }
 
     /**
-     * @return Minutes between sending warnings about a specific API key expiring.
+     * @return number of minutes between sending warnings about a specific API key expiring
      */
     int getApiTokenExpiryWarningIntervalMinutes() {
         grailsApplication.config.security?.apiToken?.expiryWarningIntervalMinutes ?: 360
     }
 
     /**
-     * @return Application specific URL from OneLogin to redirect SSO requests to.
+     * @return application specific URL from OneLogin to redirect Single Sign-On (SSO) requests to
      */
     String getOneLoginUrl() {
         grailsApplication.config.security?.onelogin?.url ?: null
     }
 
     /**
-     * @return Certificate provided by OneLogin used to validate SAML tokens.
+     * @return URL to redirect user to on logout to terminate OneLogin session
+     */
+    String getOneLoginLogoutUrl() {
+        grailsApplication.config.security?.onelogin?.logoutUrl ?: null
+    }
+
+    /**
+     * @return Certificate provided by OneLogin used to validate SAML tokens
      */
     String getOneLoginCertificate() {
         grailsApplication.config.security?.onelogin?.certificate ?: null
     }
 
     /**
-     * @return Common suffix to truncate off usernames returned by OneLogin. For example '@netflix.com'.
+     * @return common suffix to truncate off usernames returned by OneLogin. For example '@netflix.com'
      */
     String getOneLoginUsernameSuffix() {
         grailsApplication.config.security?.onelogin?.usernameSuffix ?: null
     }
 
     /**
-     * @return Details of server configurations.
+     * @return details of server configurations.
      */
     List<Environment> getServerEnvironments() {
         grailsApplication.config.server?.environments ?: []
     }
 
     /**
-     * @return Identifying name for servers that service this AWS account.
+     * @return identifying name for servers that service this AWS account
      */
     String getCanonicalServerName() {
         Environment currentEnvironment = serverEnvironments.find { it.name == accountName }
         currentEnvironment?.canonicalDnsName ?: "asgard ${accountName}"
     }
     /**
-     * @return subnet purposes that should have an internal scheme for ELBs.
+     * @return subnet purposes that should have an internal scheme for ELBs
      */
     List<String> getInternalSubnetPurposes() {
         grailsApplication.config.cloud?.internalSubnetPurposes ?: ['internal']
@@ -479,9 +635,98 @@ class ConfigService {
     }
 
     /**
-     * @return The AWS Identity and Access Management (IAM) role that will be used by default. http://aws.amazon.com/iam
+     * @return the AWS Identity and Access Management (IAM) role that will be used by default. http://aws.amazon.com/iam
      */
     String getDefaultIamRole() {
         grailsApplication.config.cloud?.defaultIamRole ?: null
+    }
+
+    /**
+     * @return true if edit links should be hidden for unauthenticated users, false to show edit links to all users
+     */
+    boolean isAuthenticationRequiredForEdit() {
+        if (flagService.isOn(Flag.SUSPEND_AUTHENTICATION_REQUIREMENT)) {
+            return false
+        }
+        grailsApplication.config.security?.authenticationRequiredForEdit ?: false
+    }
+
+    /**
+     * @return URL with content that people should grok in order to make educated decisions about using Spot Instances
+     */
+    String getSpotUrl() {
+        grailsApplication.config.cloud?.spot?.infoUrl ?: ''
+    }
+
+    /**
+     * @return URL with info about configuring Fast Properties
+     */
+    String getFastPropertyInfoUrl() {
+        grailsApplication.config.platform?.fastPropertyInfoUrl ?: ''
+    }
+
+    /**
+     * @return URL for Cloud Ready REST calls
+     */
+    String getCloudReadyUrl() {
+        grailsApplication.config.cloud?.cloudReady?.url ?: null
+    }
+
+    /**
+     * @return Regions where Chaos Monkey is indigenous
+     */
+    Collection<Region> getChaosMonkeyRegions() {
+        grailsApplication.config.cloud?.cloudReady?.chaosMonkey?.regions ?: []
+    }
+
+    /**
+     * @return base URL of the build server (Jenkins) where applications get built
+     */
+    String getBuildServerUrl() {
+        grailsApplication.config.cloud?.buildServer ?: ''
+    }
+
+    /**
+     * @return for stack names that are revered, we check the health of all the ASG instances
+     */
+    Collection<String> getSignificantStacks() {
+        grailsApplication.config.cloud?.significantStacks ?: []
+    }
+
+    /**
+     * @return Regions other than the standard AWS ones (a cloud-like data center for example).
+     */
+    Map<String, String> getSpecialCaseRegions() {
+        grailsApplication.config.cloud?.specialCaseRegions ?: [:]
+    }
+
+    /**
+     * @return a Closure that determines if EBS volumes are needed for launch configurations based on instance type
+     */
+    Closure<Boolean> getInstanceTypeNeedsEbsVolumes() {
+        grailsApplication.config.cloud?.launchConfig?.ebsVolumes?.instanceTypeNeeds ?: { String instanceType ->
+            instanceType.startsWith('m3.')
+        }
+    }
+
+    /**
+     * @return the size of EBS volumes added to launch configurations for specific instance types
+     */
+    int getSizeOfEbsVolumesAddedToLaunchConfigs() {
+        grailsApplication.config.cloud?.launchConfig?.ebsVolumes?.size ?: 125
+    }
+
+    /**
+     * @return device names for the EBS volumes added to launch configurations for specific instance types
+     */
+    List<String> getEbsVolumeDeviceNamesForLaunchConfigs() {
+        grailsApplication.config.cloud?.launchConfig?.ebsVolumes?.deviceNames ?: ['/dev/sdb', '/dev/sdc']
+    }
+
+    /**
+     * @return fast property console url based on accountName
+     */
+    String getFastPropertiesConsoleUrl() {
+        grailsApplication.config.platform?.fastPropertyConsoleUrls?."${accountName}" ?: ""
     }
 }

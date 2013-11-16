@@ -17,6 +17,7 @@ package com.netflix.asgard
 
 import com.amazonaws.AmazonServiceException
 import com.amazonaws.services.autoscaling.model.AutoScalingGroup
+import com.amazonaws.services.ec2.model.SecurityGroup
 import com.amazonaws.services.elasticloadbalancing.AmazonElasticLoadBalancing
 import com.amazonaws.services.elasticloadbalancing.model.AttachLoadBalancerToSubnetsRequest
 import com.amazonaws.services.elasticloadbalancing.model.ConfigureHealthCheckRequest
@@ -98,6 +99,19 @@ class AwsLoadBalancerService implements CacheInitializer, InitializingBean {
         }
     }
 
+    /**
+     * Finds all the load balancers with the specified security group.
+     *
+     * @param userContext who, where, why
+     * @param group the security group for which to find associated load balancers
+     * @return the load balancers that have the specified security group
+     */
+    List<LoadBalancerDescription> getLoadBalancersWithSecurityGroup(UserContext userContext, SecurityGroup group) {
+        getLoadBalancers(userContext).findAll {
+            group.groupName in it.securityGroups || group.groupId in it.securityGroups
+        }
+    }
+
     String getAppNameForLoadBalancer(String name) {
         Relationships.appNameFromLoadBalancerName(name)
     }
@@ -123,7 +137,7 @@ class AwsLoadBalancerService implements CacheInitializer, InitializingBean {
 
     List<LoadBalancerDescription> getLoadBalancersFor(UserContext userContext, String instanceId) {
         if (!instanceId) { return [] }
-        getLoadBalancers(userContext).findAll { it.instances.any { it.instanceId == instanceId }}
+        getLoadBalancers(userContext).findAll { it.instances.any { it.instanceId == instanceId } }
     }
 
     Map<String, Collection<LoadBalancerDescription>> mapInstanceIdsToLoadBalancers(UserContext userContext,
@@ -252,7 +266,7 @@ class AwsLoadBalancerService implements CacheInitializer, InitializingBean {
     }
 
     void removeLoadBalancer(UserContext userContext, String name) {
-        taskService.runTask(userContext, "RemoveLoad Balancer ${name}", { task ->
+        taskService.runTask(userContext, "Remove Load Balancer ${name}", { task ->
             def request = new DeleteLoadBalancerRequest()
                     .withLoadBalancerName(name)
             awsClient.by(userContext.region).deleteLoadBalancer(request)  // no result

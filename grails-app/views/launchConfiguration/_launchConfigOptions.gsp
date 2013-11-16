@@ -28,7 +28,8 @@
       <label for="imageId">AMI Image ID:</label>
     </td>
     <td>
-      <select id="imageId" name="imageId">
+      <select id="imageId" name="imageId" data-placeholder="-Image Id-">
+        <option value=""></option>
         <g:each var="im" in="${images}">
           <option value="${im.imageId}" ${params.imageId == im.imageId || im.imageId == image ? "selected" : ""}>${im.imageLocation} | ${im.imageId}</option>
         </g:each>
@@ -39,18 +40,7 @@
       </g:if>
     </td>
   </tr>
-  <tr class="prop">
-    <td class="name">
-      <label for="instanceType"><g:link controller="instanceType" action="list">Instance Type:</g:link></label>
-    </td>
-    <td>
-      <select id="instanceType" name="instanceType">
-        <g:each var="t" in="${instanceTypes}">
-          <option value="${t.name}" ${t.name == params.instanceType || t.name == instanceType ? 'selected' : ''}>${t.name} ${t.monthlyLinuxOnDemandPrice ? t.monthlyLinuxOnDemandPrice + '/mo' : ''}</option>
-        </g:each>
-      </select>
-    </td>
-  </tr>
+  <g:render template="/launchConfiguration/instanceTypeSelect" model="[rowClass: 'advanced']"/>
   <tr class="prop advanced">
     <td class="name">
       <label for="keyName">SSH Key:</label>
@@ -71,16 +61,17 @@
   <g:render template="/common/securityGroupSelection" />
   <tr class="prop advanced">
     <td class="name">
-      <label>Pricing:</label>
+      <label>Spot Instances<br/>(On-Demand<br/>price bid):</label>
     </td>
     <td>
       <div>
         <g:radio name="pricing" id="onDemand" value="${InstancePriceType.ON_DEMAND.name()}" checked="${!pricing || pricing == InstancePriceType.ON_DEMAND.name()}"/>
-        <label for="onDemand" class="choice">On-Demand</label>
+        <label for="onDemand" class="choice">Disable (more reliable)</label>
       </div>
       <div>
         <g:radio name="pricing" id="spot" value="${InstancePriceType.SPOT.name()}" checked="${pricing == InstancePriceType.SPOT.name()}"/>
-        <label for="spot" class="choice">Spot</label>
+        <label for="spot" class="choice">Enable (reduced costs)</label>
+        &nbsp;<a href="${spotUrl}">What's this?</a>
       </div>
     </td>
   </tr>
@@ -102,7 +93,7 @@
   </tr>
   <tr class="prop advanced">
     <td class="name">
-      <label for="iamInstanceProfile">IAM Instance Profile:</label>
+      <label for="iamInstanceProfile">IAM Instance<br/>Profile:</label>
     </td>
     <td>
       <input type="text" id="iamInstanceProfile" name="iamInstanceProfile" value="${params.iamInstanceProfile ?: iamInstanceProfile}"/>

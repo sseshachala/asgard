@@ -13,7 +13,6 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package com.netflix.asgard
 
 import com.netflix.asgard.auth.AsgardToken
@@ -77,7 +76,7 @@ class AuthControllerSpec extends Specification {
 
     def 'should return 401 if AuthenticationException thrown'() {
         prepareAuthentication()
-        subject.login(asgardToken) >> { throw new AuthenticationException('Chaos!!')}
+        subject.login(asgardToken) >> { throw new AuthenticationException('Chaos!!') }
 
         when:
         controller.signIn()

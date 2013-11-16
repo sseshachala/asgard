@@ -33,8 +33,26 @@ class CacheController {
     def index = { redirect(action: 'list', params: params) }
 
     def list = {
+        Map<String, ? extends List> result = analyzeCaches()
+        withFormat {
+            html { result }
+            xml { new XML(result).render(response) }
+            json { new JSON(result).render(response) }
+        }
+    }
+
+    def remaining = {
+        List<String> unfilled = analyzeCaches().unfilled
+        withFormat {
+            html { unfilled }
+            xml { new XML(unfilled).render(response) }
+            json { new JSON(unfilled).render(response) }
+        }
+    }
+
+    public Map<String, ? extends List> analyzeCaches() {
         Collection<Fillable> fillableCaches = caches.properties*.value.findAll { it instanceof Fillable }
-        List<Map> multiRegionSummaries = []
+        List<Map> multiRegSummaries = []
         List<Map> globalSummaries = []
         List<Map> prices = []
         fillableCaches.sort { it.name }.each {
@@ -47,21 +65,17 @@ class CacheController {
                     Map<String, Object> cachedMapSummary = summarize(cachedMap)
                     regionsToSummaries.put(it.code, cachedMapSummary)
                 }
-                multiRegionSummaries << [name: multi.name, filled: multi.filled, regionalCaches: regionsToSummaries]
+                multiRegSummaries << [name: multi.name, filled: multi.filled, regionalCaches: regionsToSummaries]
             } else if (it instanceof CachedMap) {
                 globalSummaries << summarize(it)
             } else if (it instanceof MultiRegionInstancePrices) {
                 prices << [name: it.name, filled: it.filled]
             }
         }
-        List<String> unfilled = listUnfilled(prices) + listUnfilled(globalSummaries) + listUnfilled(multiRegionSummaries)
+        List<String> unfilled = listUnfilled(prices) + listUnfilled(globalSummaries) + listUnfilled(multiRegSummaries)
         Map<String, List> result = [unfilled: unfilled, globalCaches: globalSummaries, prices: prices,
-                multiRegionCaches: multiRegionSummaries]
-        withFormat {
-            html { result }
-            xml { new XML(result).render(response) }
-            json { new JSON(result).render(response) }
-        }
+                multiRegionCaches: multiRegSummaries]
+        result
     }
 
     private Map<String, Object> summarize(CachedMap c) {

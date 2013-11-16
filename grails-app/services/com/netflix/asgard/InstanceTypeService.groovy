@@ -15,13 +15,11 @@
  */
 package com.netflix.asgard
 
-import com.amazonaws.services.ec2.model.Image
 import com.amazonaws.services.ec2.model.InstanceType
 import com.google.common.collect.ArrayTable
-import com.google.common.collect.ImmutableMap
 import com.google.common.collect.Table
 import com.netflix.asgard.cache.CacheInitializer
-import com.netflix.asgard.mock.Mocks
+import com.netflix.asgard.mock.MockFileUtils
 import com.netflix.asgard.model.HardwareProfile
 import com.netflix.asgard.model.InstancePriceType
 import com.netflix.asgard.model.InstanceProductType
@@ -29,7 +27,6 @@ import com.netflix.asgard.model.InstanceTypeData
 import groovy.transform.Immutable
 import org.codehaus.groovy.grails.web.json.JSONArray
 import org.codehaus.groovy.grails.web.json.JSONElement
-import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
 import org.jsoup.nodes.Node
@@ -42,12 +39,10 @@ class InstanceTypeService implements CacheInitializer {
 
     static transactional = false
 
-    final String instanceTypesUrl = 'http://aws.amazon.com/ec2/instance-types/'
     final Map<JsonTypeSizeCombo, InstanceType> typeSizeCodesToInstanceTypes = buildTypeSizeCodesToInstanceTypes()
 
     final BigDecimal lowPrioritySpotPriceFactor = 1.0
     final BigDecimal highPrioritySpotPriceFactor = 1.04
-    final Map<String, String> imageArchToInstanceTypeArch = ImmutableMap.copyOf([x86_64: '64-bit', i386: '32-bit'])
 
     def grailsApplication
     def awsEc2Service
@@ -82,32 +77,34 @@ class InstanceTypeService implements CacheInitializer {
         instanceType.linuxOnDemandPrice * highPrioritySpotPriceFactor
     }
 
-    Collection<InstanceTypeData> findRelevantInstanceTypesForImage(UserContext userContext, Image image) {
-        Collection<InstanceTypeData> instanceTypes = getInstanceTypes(userContext)
-        String instanceTypeArch = imageArchToInstanceTypeArch[image.architecture]
-        instanceTypes.findAll { it.hardwareProfile.architecture.contains(instanceTypeArch) }
-    }
-
     InstanceTypeData getInstanceType(UserContext userContext, String instanceTypeName) {
         caches.allInstanceTypes.by(userContext.region).get(instanceTypeName)
     }
 
+    /**
+     * Gets the instance types with associated pricing data for the current region.
+     *
+     * @param userContext who, where, why
+     * @return the instance types, sorted by price, with unpriced types at the end sorted by name
+     */
     Collection<InstanceTypeData> getInstanceTypes(UserContext userContext) {
-        caches.allInstanceTypes.by(userContext.region).list().sort { it.linuxOnDemandPrice }
-    }
-
-    private Document fetchInstanceTypesDocument() {
-        if (configService.online) {
-            Jsoup.parse(restClientService.getAsText(instanceTypesUrl))
-        } else {
-            fetchLocalInstanceTypesDocument()
+        caches.allInstanceTypes.by(userContext.region).list().sort { a, b ->
+            BigDecimal aPrice = a.linuxOnDemandPrice
+            BigDecimal bPrice = b.linuxOnDemandPrice
+            if (aPrice == null) {
+                return bPrice == null ? a.name <=> b.name : 1 // b goes first when a is the only null price
+            } else if (bPrice == null) {
+                return -1 // a goes first when b is the only null price
+            }
+            // When both prices exist, smaller goes first. Return integers. Avoid subtraction decimal rounding errors.
+            return aPrice < bPrice ? -1 : 1
         }
     }
 
     private JSONElement fetchPricingJsonData(InstancePriceType instancePriceType) {
         Boolean online = grailsApplication.config.server.online
         String pricingJsonUrl = instancePriceType.url
-        online ? restClientService.getAsJson(pricingJsonUrl) : Mocks.parseJsonFile(instancePriceType.dataSourceFileName)
+        online ? restClientService.getAsJson(pricingJsonUrl) : MockFileUtils.parseJsonFile(instancePriceType.dataSourceFileName)
     }
 
     private Collection<HardwareProfile> getHardwareProfiles() {
@@ -127,54 +124,66 @@ class InstanceTypeService implements CacheInitializer {
     }
 
     private List<InstanceTypeData> buildInstanceTypes(Region region) {
+
+        Map<String, InstanceTypeData> namesToInstanceTypeDatas = [:]
+        Set<InstanceType> enumInstanceTypes = InstanceType.values() as Set
+
+        // Compile standard instance types, first without optional hardware and pricing metadata.
+        for (InstanceType instanceType in enumInstanceTypes) {
+            String name = instanceType.toString()
+            namesToInstanceTypeDatas[name] = new InstanceTypeData(
+                    hardwareProfile: new HardwareProfile(instanceType: name)
+            )
+        }
+
+        // Add any custom instance types that are still missing from the InstanceType enum.
+        Collection<InstanceTypeData> customInstanceTypes = configService.customInstanceTypes
+        for (InstanceTypeData customInstanceTypeData in customInstanceTypes) {
+            String name = customInstanceTypeData.name
+            namesToInstanceTypeDatas[name] = customInstanceTypeData
+        }
+
+        // If hardware metadata is available, replace bare-bones objects in map of namesToInstanceTypeDatas.
         try {
             Collection<HardwareProfile> hardwareProfiles = getHardwareProfiles()
             RegionalInstancePrices onDemandPrices = getOnDemandPrices(region)
             RegionalInstancePrices reservedPrices = getReservedPrices(region)
             RegionalInstancePrices spotPrices = getSpotPrices(region)
 
-            List<InstanceTypeData> instanceTypes = InstanceType.values().collect { InstanceType instanceType ->
-                HardwareProfile hardwareProfile = hardwareProfiles.find { it.instanceType == instanceType.toString() }
-                new InstanceTypeData(
-                        hardwareProfile: hardwareProfile,
-                        linuxOnDemandPrice: onDemandPrices.get(instanceType, InstanceProductType.LINUX_UNIX),
-                        linuxReservedPrice: reservedPrices.get(instanceType, InstanceProductType.LINUX_UNIX),
-                        linuxSpotPrice: spotPrices.get(instanceType, InstanceProductType.LINUX_UNIX),
-                        windowsOnDemandPrice: onDemandPrices.get(instanceType, InstanceProductType.WINDOWS),
-                        windowsReservedPrice: reservedPrices.get(instanceType, InstanceProductType.WINDOWS),
-                        windowsSpotPrice: spotPrices.get(instanceType, InstanceProductType.WINDOWS)
-                )
+            for (InstanceType instanceType in enumInstanceTypes) {
+                String name = instanceType.toString()
+                HardwareProfile hardwareProfile = hardwareProfiles.find { it.instanceType == name }
+                if (hardwareProfile) {
+                    InstanceTypeData instanceTypeData = new InstanceTypeData(
+                            hardwareProfile: hardwareProfile,
+                            linuxOnDemandPrice: onDemandPrices.get(instanceType, InstanceProductType.LINUX_UNIX),
+                            linuxReservedPrice: reservedPrices?.get(instanceType, InstanceProductType.LINUX_UNIX),
+                            linuxSpotPrice: spotPrices.get(instanceType, InstanceProductType.LINUX_UNIX),
+                            windowsOnDemandPrice: onDemandPrices.get(instanceType, InstanceProductType.WINDOWS),
+                            windowsReservedPrice: reservedPrices?.get(instanceType, InstanceProductType.WINDOWS),
+                            windowsSpotPrice: spotPrices.get(instanceType, InstanceProductType.WINDOWS)
+                    )
+                    namesToInstanceTypeDatas[name] = instanceTypeData
+                } else {
+                    log.info "Unable to resolve ${instanceType}"
+                }
             }
-            // Only include types that have prices listed for this region
-            Collection<InstanceTypeData> relevantInstanceTypes = instanceTypes.findAll { it.linuxOnDemandPrice }
-            Collection<String> foundInstanceTypeNames = relevantInstanceTypes*.name
-
-            // Add any custom instance types that are still missing from the InstanceType enum.
-            List<InstanceTypeData> customInstanceTypes = configService.customInstanceTypes.findAll {
-                !(it.name in foundInstanceTypeNames)
-            }
-            return relevantInstanceTypes + customInstanceTypes
         } catch (Exception e) {
             log.error(e)
             emailerService.sendExceptionEmail('Error parsing Amazon instance data', e)
-            return []
         }
+
+        // Sort based on Linux price if possible. Otherwise sort by name.
+        List<InstanceTypeData> instanceTypeDatas = namesToInstanceTypeDatas.values() as List
+        instanceTypeDatas.sort { a, b -> a.name <=> b.name }
+        instanceTypeDatas.sort { a, b -> a.linuxOnDemandPrice <=> b.linuxOnDemandPrice }
     }
 
     private Document fetchLocalInstanceTypesDocument() {
-        Mocks.parseHtmlFile('instance-types.html')
+        MockFileUtils.parseHtmlFile('instance-types.html')
     }
 
     private List<HardwareProfile> retrieveHardwareProfiles() {
-
-        // http://imediava.wordpress.com/2011/09/24/web-scraping-with-groovy-3-of-3/
-        try {
-            return parseHardwareProfilesDocument(fetchInstanceTypesDocument())
-        } catch (Exception e) {
-            String msg = "Using old hardware profiles document because of an unexpected format at ${instanceTypesUrl}"
-            log.error msg
-            emailerService.sendExceptionEmail(msg, e)
-        }
         parseHardwareProfilesDocument(fetchLocalInstanceTypesDocument())
     }
 
@@ -192,24 +201,24 @@ class InstanceTypeService implements CacheInitializer {
                 Element dataParagraph = dataParagraphs.get(i)
                 List<Node> dataChildNodes = dataParagraph.childNodes().findAll { it.nodeName() != 'br' }
                 Collection<String> textNodes = dataChildNodes.collect { it.text().trim() }
-                String name = Check.notEmpty(textNodes.find { it.startsWith('API name: ')}, 'name') - 'API name: '
+                String name = Check.notEmpty(textNodes.find { it.startsWith('API name: ') }, 'name') - 'API name: '
 
                 // Skip any instance type Amazon has added to their web page that is not yet in their Java SDK
                 if (InstanceType.values().any { it.toString() == name }) {
 
-                    String memoryRaw = Check.notEmpty(textNodes.find { it.endsWith(' memory')}, 'memory')
+                    String memoryRaw = Check.notEmpty(textNodes.find { it.endsWith(' memory') }, 'memory')
                     String memory = (memoryRaw - ' of memory' - ' memory').trim()
 
-                    String cpu = (Check.notEmpty(textNodes.find { it.contains('Compute Unit')}, 'cpu')).trim()
+                    String cpu = (Check.notEmpty(textNodes.find { it.contains('Compute Unit') }, 'cpu')).trim()
 
-                    String storageRaw = Check.notEmpty(textNodes.find { it.contains('storage')}, 'storage')
+                    String storageRaw = Check.notEmpty(textNodes.find { it.contains('storage') }, 'storage')
                     String storage = (storageRaw - ' of instance storage' - ' instance storage' - ' storage').trim()
 
-                    String archRaw = textNodes.find { it.endsWith('platform')}
+                    String archRaw = textNodes.find { it.endsWith('platform') }
                     String validArchRaw = Check.notEmpty(archRaw, 'architecture')
                     String architecture = (validArchRaw - ' platform').trim()
 
-                    String ioPerfRaw = textNodes.find { it.startsWith('I/O Performance: ')}
+                    String ioPerfRaw = textNodes.find { it.startsWith('I/O Performance: ') }
                     String validIoPerfRaw = Check.notEmpty(ioPerfRaw, 'ioPerformance')
                     String ioPerformance = (validIoPerfRaw - 'I/O Performance: ').trim()
 
@@ -228,8 +237,6 @@ class InstanceTypeService implements CacheInitializer {
                     hardwareProfiles << hardwareProfile
                 }
             }
-        } else {
-            throw new Exception("Unexpected format of HTML on ${instanceTypesUrl}")
         }
         hardwareProfiles
     }

@@ -53,6 +53,10 @@
           </td>
         </tr>
         <tr class="prop">
+          <td class="name">App Group:</td>
+          <td class="value">${app.group}</td>
+        </tr>
+        <tr class="prop">
           <td class="name">Type:</td>
           <td class="value">${app.type}</td>
         </tr>
@@ -72,6 +76,12 @@
           <td class="name">Monitor Bucket Type:</td>
           <td class="value">${app.monitorBucketType.description}</td>
         </tr>
+        <g:if test="${isChaosMonkeyActive}">
+          <tr class="prop">
+            <td class="name">Chaos Monkey:</td>
+            <td class="value"><a class="cloudready" href="${chaosMonkeyEditLink}">Edit in Cloudready</a></td>
+          </tr>
+        </g:if>
         <tr class="prop">
           <td class="name">Create Time:</td>
           <td class="value"><g:formatDate date="${app.createTime}"/></td>

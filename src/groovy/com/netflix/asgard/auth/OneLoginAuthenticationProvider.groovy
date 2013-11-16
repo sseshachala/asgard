@@ -24,6 +24,7 @@ import com.onelogin.saml.Response
 import javax.servlet.http.HttpServletRequest
 import org.apache.shiro.authc.AuthenticationException
 import org.apache.shiro.authc.AuthenticationInfo
+import org.apache.shiro.authc.RememberMeAuthenticationToken
 import org.apache.shiro.authc.SimpleAuthenticationInfo
 import org.springframework.beans.factory.annotation.Autowired
 
@@ -67,7 +68,7 @@ class OneLoginAuthenticationProvider implements AuthenticationProvider {
         new SimpleAuthenticationInfo(samlToken.principal, samlToken.credentials, 'AsgardRealm')
     }
 
-    class SamlToken implements AsgardToken {
+    class SamlToken implements AsgardToken, RememberMeAuthenticationToken {
 
         String samlResponseString
         Response samlResponse
@@ -77,11 +78,19 @@ class OneLoginAuthenticationProvider implements AuthenticationProvider {
             AccountSettings accountSettings = new AccountSettings(certificate: configService.oneLoginCertificate)
 
             samlResponse = new Response(accountSettings)
-            samlResponse.loadXmlFromBase64(samlResponseString)
+            try {
+                samlResponse.loadXmlFromBase64(samlResponseString)
+            } catch (Exception e) {
+                throw new AuthenticationException("Unable to parse response from OneLogin: ${samlResponseString}", e)
+            }
         }
 
         boolean isValid() {
             samlResponse.valid
+        }
+
+        boolean isRememberMe() {
+            true
         }
 
         Object getCredentials() {
@@ -92,5 +101,10 @@ class OneLoginAuthenticationProvider implements AuthenticationProvider {
             String suffix = configService.oneLoginUsernameSuffix
             suffix ? samlResponse.nameId.replaceAll("${suffix}\$", '') : samlResponse.nameId
         }
+    }
+
+    @Override
+    public String logoutUrl(HttpServletRequest request) {
+        configService.oneLoginLogoutUrl
     }
 }

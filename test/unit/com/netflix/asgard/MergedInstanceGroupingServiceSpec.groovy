@@ -35,8 +35,8 @@ class MergedInstanceGroupingServiceSpec extends Specification {
 
     Instance instance = new Instance(instanceId: INSTANCE_ID)
     Instance instance2 = new Instance(instanceId: INSTANCE_ID2)
-    ApplicationInstance appInstance = new ApplicationInstance([:])
-    ApplicationInstance appInstance2 = new ApplicationInstance([:])
+    ApplicationInstance appInstance = new ApplicationInstance()
+    ApplicationInstance appInstance2 = new ApplicationInstance()
     UserContext userContext = Mocks.userContext()
 
     def 'should create merged instances with ec2 and discovery instance'() {
@@ -86,7 +86,7 @@ class MergedInstanceGroupingServiceSpec extends Specification {
 
     def 'should create merged instance when app specified'() {
         appInstance.instanceId = INSTANCE_ID
-        discoveryService.getAppInstances(userContext, 'appName', From.CACHE) >> [appInstance]
+        discoveryService.getAppInstances(userContext, 'appName') >> [appInstance]
         awsEc2Service.getInstance(userContext, INSTANCE_ID, From.CACHE) >> instance
 
         when:

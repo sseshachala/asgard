@@ -36,6 +36,8 @@ class InstanceController {
 
     final static allowedMethods = [terminate: 'POST', terminateAndShrinkGroup: 'POST']
 
+    static editActions = ['associate']
+
     def index = { redirect(action: 'list', params:params) }
 
     def awsAutoScalingService
@@ -45,11 +47,31 @@ class InstanceController {
     def discoveryService
     def mergedInstanceGroupingService
 
+    /**
+     * The special marker for looking for items that do not have an application.
+     */
+    static final String NO_APP_ID = '_noapp'
+
+    def apps = {
+        UserContext userContext = UserContext.of(request)
+        List<MergedInstance> allInstances = mergedInstanceGroupingService.getMergedInstances(userContext)
+        List<String> appNames = allInstances.findResults { it.appName?.toLowerCase() ?: null } as List<String>
+        Map result = [appNames: appNames.unique().sort(), noAppId: NO_APP_ID]
+        withFormat {
+            html { result }
+            xml { new XML(result).render(response) }
+            json { new JSON(result).render(response) }
+        }
+    }
+
     def list = {
         UserContext userContext = UserContext.of(request)
         List<MergedInstance> instances = []
         Set<String> appNames = Requests.ensureList(params.id).collect { it.split(',') }.flatten() as Set<String>
-        if (appNames) {
+        if (appNames.contains(NO_APP_ID)) {
+            instances = mergedInstanceGroupingService.getMergedInstances(userContext).findAll { !it.appName }
+        }
+        else if (appNames) {
             instances = appNames.collect { mergedInstanceGroupingService.getMergedInstances(userContext, it) }.flatten()
         } else {
             instances = mergedInstanceGroupingService.getMergedInstances(userContext)
@@ -90,7 +112,7 @@ class InstanceController {
                             app(name: entry.element.packageName,
                                 version: entry.element.version,
                                 count: entry.count,
-                                cl: entry.element.changelist,
+                                cl: entry.element.commit,
                                 buildJob: entry.element.buildJobName,
                                 buildNum: entry.element.buildNumber)
                         }
@@ -156,7 +178,7 @@ class InstanceController {
             appInst = discoveryService.getAppInstance(userContext, instanceId)
             appName = appInst?.appName
         }
-        Reservation instRsrv = instanceId ? awsEc2Service.getInstanceReservation(userContext, instanceId) : null
+        Reservation instRsrv = awsEc2Service.getInstanceReservation(userContext, instanceId)
         Instance instance = instRsrv ? instRsrv.instances[0] : null
         if (!appInst && !instance) {
             String identifier = instanceId ?: "${params.appName}/${params.hostName}"
@@ -208,12 +230,12 @@ class InstanceController {
 
         // All this deregister-before-terminate logic is complicated because it needs to be done in large batches to
         // reduce Amazon errors. When Amazon fixes their ELB bugs a lot of this code should be removed for simplicity.
-        Map<String, Collection<String>> asgNamesToInstanceIdSets = new HashMap<String, Collection<String>>()
+        Map<String, Collection<String>> asgNamesToInstanceIdSets = [:]
         for (String instanceId in instanceIds) {
             String asg = awsAutoScalingService.getAutoScalingGroupFor(userContext, instanceId)?.autoScalingGroupName
             if (asg) {
                 if (!asgNamesToInstanceIdSets.containsKey(asg)) {
-                    asgNamesToInstanceIdSets.put(asg, new HashSet<String>())
+                    asgNamesToInstanceIdSets.put(asg, [] as Set)
                 }
                 asgNamesToInstanceIdSets[asg].add(instanceId)
             }
@@ -273,7 +295,8 @@ class InstanceController {
     private void chooseRedirect(String autoScalingGroupName, List<String> instanceIds, String appName = null) {
         Map destination = [action: 'list']
         if (autoScalingGroupName) {
-            destination = [controller: 'autoScaling', action: 'show', params: [id: autoScalingGroupName, runHealthChecks: true]]
+            destination = [controller: 'autoScaling', action: 'show', params: [id: autoScalingGroupName,
+                    runHealthChecks: true]]
         } else if (instanceIds.size() == 1) {
             destination = [action: 'show', params: [id: instanceIds[0]]]
         } else if (appName) {
@@ -288,8 +311,9 @@ class InstanceController {
         String autoScalingGroupName = params.autoScalingGroupName
 
         Set<String> lbNames = new TreeSet<String>()
-        instanceIds.each { instanceId ->
-            lbNames.addAll(awsLoadBalancerService.getLoadBalancersFor(userContext, instanceId).collect { it.loadBalancerName })
+        instanceIds.each { id ->
+            List<LoadBalancerDescription> loadBalancers = awsLoadBalancerService.getLoadBalancersFor(userContext, id)
+            lbNames.addAll(loadBalancers.collect { it.loadBalancerName })
         }
 
         if (lbNames.isEmpty()) {

@@ -56,6 +56,12 @@ enum Region {
             'Singapore'
     ),
 
+    AP_SOUTHEAST_2('ap-southeast-2',
+            'apac-syd',
+            'ap-southeast-2.png',
+            'Sydney'
+    ),
+
     SA_EAST_1('sa-east-1',
             'sa-east-1',
             'sa-east-1.png',
@@ -112,7 +118,9 @@ enum Region {
     }
     static Region defaultRegion() { Region.US_EAST_1 }
 
-    String getDescription() { "$code ($location)" }
+    String getDescription() {
+        "$code ($location)"
+    }
 
     String toString() { code }
 }

@@ -77,7 +77,7 @@ class ImageService implements BackgroundProcessInitializer {
         String userData = Ensure.encoded(launchTemplateService.buildUserDataForImage(userContext, image))
         Map<String, String> tagPairs = buildTagPairs(image, ownerName)
 
-        List<Tag> tags = tagPairs.collect { String key, String value -> new Tag(key, value)}
+        List<Tag> tags = tagPairs.collect { String key, String value -> new Tag(key, value) }
 
         BigDecimal spotPrice = instanceTypeService.calculateLeisureLinuxSpotBid(userContext, instanceType)
 
@@ -158,7 +158,7 @@ class ImageService implements BackgroundProcessInitializer {
     private Collection<String> findInUseImageNamesForRegion(Task task, Region region) {
         UserContext userContextForRegion = task.userContext.withRegion(region)
 
-        Collection<String> inUseImageIdsForRegion = new HashSet<String>()
+        Collection<String> inUseImageIdsForRegion = [] as Set
         Set<String> remoteUsedImageIds = getRemoteImageIdsInUse(region, task)
         log.debug "Remote in use AMI count: ${remoteUsedImageIds.size()}"
         inUseImageIdsForRegion += remoteUsedImageIds
@@ -197,7 +197,7 @@ class ImageService implements BackgroundProcessInitializer {
     }
 
     private Collection getInUseBaseImageIds(Collection<Image> amis, Collection<String> inUseImageIdsForRegion) {
-        Collection<String> inUseBaseImageIds = new HashSet<String>()
+        Collection<String> inUseBaseImageIds = [] as Set
         amis.each { Image ami ->
             if (inUseImageIdsForRegion.contains(ami.imageId)) {
                 String baseAmiId = Relationships.baseAmiIdFromDescription(ami.description)
@@ -265,7 +265,7 @@ class ImageService implements BackgroundProcessInitializer {
         Collection<Image> testImages = awsEc2Service.getAccountImages(UserContext.auto(region))
 
         String url = "${promotionTargetServer}/${region.code}/image/list.xml"
-        GPathResult prodImagesXml = restClientService.getAsXml(url)
+        def prodImagesXml = restClientService.getAsXml(url)
         if (prodImagesXml == null) {
             log.info 'Promotion target server unresponsive, continuing to attempt replication.'
             return
@@ -356,7 +356,8 @@ class ImageService implements BackgroundProcessInitializer {
             log.debug "Calling ${url} with params ${query} for tag replication."
             int responseCode = restClientService.post(url, query)
             if (responseCode >= 300) {
-                throw new Exception("Call to ${url} with params ${query} returned status code ${responseCode}")
+                String msg = "Call to ${url} with params ${query} returned status code ${responseCode}"
+                throw new ServerNotActiveException(msg)
             }
         } catch (Exception e) {
             // Let the thread continue even if promotion target server returns an error

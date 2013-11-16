@@ -23,6 +23,7 @@ import com.amazonaws.services.elasticloadbalancing.AmazonElasticLoadBalancingCli
 import com.amazonaws.services.rds.AmazonRDSClient
 import com.amazonaws.services.s3.AmazonS3Client
 import com.amazonaws.services.simpledb.AmazonSimpleDBClient
+import com.amazonaws.services.simpleworkflow.AmazonSimpleWorkflowClient
 import com.amazonaws.services.sns.AmazonSNSClient
 import com.amazonaws.services.sqs.AmazonSQSClient
 import com.netflix.asgard.mock.MockAmazonAutoScalingClient
@@ -32,6 +33,7 @@ import com.netflix.asgard.mock.MockAmazonElasticLoadBalancingClient
 import com.netflix.asgard.mock.MockAmazonRDSClient
 import com.netflix.asgard.mock.MockAmazonS3Client
 import com.netflix.asgard.mock.MockAmazonSimpleDBClient
+import com.netflix.asgard.mock.MockAmazonSimpleWorkflowClient
 import com.netflix.asgard.mock.MockAmazonSnsClient
 import com.netflix.asgard.mock.MockAmazonSqsClient
 import org.springframework.beans.factory.InitializingBean
@@ -45,13 +47,14 @@ class AwsClientService implements InitializingBean {
 
     def grailsApplication
     def secretService
+    def serverService
     def configService
 
     /**
      * Interface names mapped to ClientTypes wrapper objects. For each interface name, a real and fake concrete class
      * type should be provided.
      */
-    private Map<String, Class> interfaceSimpleNamesToAwsClientClasses 
+    private Map<String, Class> interfaceSimpleNamesToAwsClientClasses
 
     private ClientConfiguration clientConfiguration
 
@@ -65,16 +68,22 @@ class AwsClientService implements InitializingBean {
                 AmazonRDS: concrete(AmazonRDSClient, MockAmazonRDSClient),
                 AmazonS3: concrete(AmazonS3Client, MockAmazonS3Client),
                 AmazonSimpleDB: concrete(AmazonSimpleDBClient, MockAmazonSimpleDBClient),
+                AmazonSimpleWorkflow: concrete(AmazonSimpleWorkflowClient, MockAmazonSimpleWorkflowClient),
                 AmazonSNS: concrete(AmazonSNSClient, MockAmazonSnsClient),
                 AmazonSQS: concrete(AmazonSQSClient, MockAmazonSqsClient)
         ]
         clientConfiguration = new ClientConfiguration()
         clientConfiguration.proxyHost = configService.proxyHost
         clientConfiguration.proxyPort = configService.proxyPort
+        clientConfiguration.userAgent = 'asgard-' + serverService.version
     }
 
     public <T> T create(Class<T> interfaceType) {
         Class implementationType = interfaceSimpleNamesToAwsClientClasses[interfaceType.simpleName]
+        createImpl(implementationType)
+    }
+
+    public <T> T createImpl(Class<T> implementationType) {
         implementationType.newInstance(secretService.awsCredentials, clientConfiguration) as T
     }
 

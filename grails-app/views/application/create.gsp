@@ -34,6 +34,7 @@
       </div>
     </g:hasErrors>
     <g:form action="save" method="post" class="validate">
+      <g:hiddenField name="requestedFromGui" value="true" />
       <div class="dialog">
         <table>
           <tbody>
@@ -43,6 +44,14 @@
             </td>
             <td valign="top">
               <input type="text" id="name" name="name" value="${params.name}" class="required"/>
+            </td>
+          </tr>
+          <tr class="prop">
+            <td valign="top" class="name">
+              <label for="group">App Group:</label>
+            </td>
+            <td valign="top">
+              <input type="text" id="group" name="group" value="${params.group}"/>
             </td>
           </tr>
           <tr class="prop">
@@ -96,6 +105,7 @@
               </select>
             </td>
           </tr>
+          <g:render template="/common/chaosMonkeyOptions" />
           </tbody>
         </table>
       </div>

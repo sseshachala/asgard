@@ -16,8 +16,11 @@
 package com.netflix.asgard
 
 import com.amazonaws.AmazonServiceException
+import com.amazonaws.services.simpleworkflow.flow.WorkflowClientExternal
+import com.amazonaws.services.simpleworkflow.model.ChildPolicy
 import com.google.common.collect.Lists
 import com.netflix.asgard.model.SimpleDbSequenceLocator
+import com.netflix.asgard.model.WorkflowExecutionBeanOptions
 import com.netflix.asgard.plugin.TaskFinishedListener
 import java.util.concurrent.ConcurrentLinkedQueue
 import org.codehaus.groovy.runtime.StackTraceUtils
@@ -30,23 +33,22 @@ import org.codehaus.groovy.runtime.StackTraceUtils
 class TaskService {
 
     static transactional = false
-    private static final Collection<String> NON_ALERTABLE_ERROR_CODES = ['ValidationError', 'InvalidParameterValue',
-            'InvalidGroup.InUse', 'DBInstanceAlreadyExists', 'DuplicateLoadBalancerName', 'InvalidDBInstanceState',
-            'InvalidDBSnapshotState']
+    private static final Collection<String> NON_ALERTABLE_ERROR_CODES = ['DBInstanceAlreadyExists',
+            'DuplicateLoadBalancerName', 'InvalidDBInstanceState', 'InvalidDBSnapshotState', 'InvalidGroup.Duplicate',
+            'InvalidGroup.InUse', 'InvalidParameterValue', 'ValidationError']
 
-    def awsSimpleDbService
+    Caches caches
+    def awsSimpleWorkflowService
     def emailerService
+    def flowService
+    def idService
     def grailsApplication
     def pluginService
 
     Integer numberOfCompletedTasksToRetain = 500
 
-    /** The location of the sequence number in SimpleDB */
-    final SimpleDbSequenceLocator sequenceLocator = new SimpleDbSequenceLocator(region: Region.defaultRegion(),
-            domainName: 'CLOUD_TASK_SEQUENCE', itemName: 'task_id', attributeName: 'value')
-
-    private ConcurrentLinkedQueue<Task> running = new ConcurrentLinkedQueue<Task>()
-    private ConcurrentLinkedQueue<Task> completed = new ConcurrentLinkedQueue<Task>()
+    private Queue<Task> running = new ConcurrentLinkedQueue<Task>()
+    private Queue<Task> completed = new ConcurrentLinkedQueue<Task>()
 
     Task startTask(UserContext userContext, String name, Closure work, Link link = null) {
         Task task = newTask(userContext, name, link)
@@ -84,19 +86,13 @@ class TaskService {
         } catch (CancelledException ignored) {
             // Thrown if task is cancelled while sleeping. Not an error.
         } catch (Exception e) {
-            if (task.status != 'failed') { // Tasks can be nested. We only want to capture the failure once.
+            if (task.status != 'failed' && task.name) {
+                // Tasks can be nested. We only want to capture the failure once.
+                // Unnamed tasks should not be marked completed. They are useful when you need to reuse code based on
+                // tasks without actually using the task system (like in an AWS SWF workflow with its own task system).
                 exception(task, e)
             }
             throw e
-        }
-    }
-
-    private String nextTaskId(UserContext userContext) {
-        try {
-            return awsSimpleDbService.incrementAndGetSequenceNumber(userContext, sequenceLocator)
-        } catch (Exception e) {
-            emailerService.sendExceptionEmail(e.toString(), e)
-            return UUID.randomUUID().toString()
         }
     }
 
@@ -106,8 +102,8 @@ class TaskService {
             String msg = grailsApplication.config.cloud.trackingTicketRequiredMessage ?: 'Tracking ticket required'
             throw new ValidationException(msg)
         }
-
-        Task task = new Task(id: nextTaskId(userContext), userContext: userContext, name: name, status: 'starting',
+        String id = idService.nextId(userContext, SimpleDbSequenceLocator.Task)
+        Task task = new Task(id: id, userContext: userContext, name: name, status: 'starting',
                 startTime: new Date(), env: grailsApplication.config.cloud.accountName, objectType: link?.type,
                 objectId: link?.id
         )
@@ -171,7 +167,7 @@ class TaskService {
         if (task.email) {
             emailerService.sendUserEmail(task.email, task.summary, task.logAsString)
         }
-        for(TaskFinishedListener taskFinishedListener in pluginService?.taskFinishedListeners) {
+        for (TaskFinishedListener taskFinishedListener in pluginService?.taskFinishedListeners) {
             try {
                 taskFinishedListener.taskFinished(task)
             } catch (Exception e) {
@@ -180,21 +176,55 @@ class TaskService {
         }
     }
 
-    def getRunning = { Lists.newArrayList(running) }
+    /**
+     * @return only in-memory running tasks (no SWF workflow executions)
+     */
+    List<Task> getRunningInMemory() {
+        Lists.newArrayList(running)
+    }
 
-    def getCompleted = { Lists.newArrayList(completed) }
-
-    Task getTaskById(String id) {
-        Task task = running.find { it.id == id }
-        if (!task) { task = completed.find { it.id == id } }
-
-        // If we hit a race condition where a task id is used before the task is running then wait and try again.
-        if (!task) {
-            sleep 1000
-            task = running.find { it.id == id }
+    /**
+     * @return all running tasks (including SWF workflow executions)
+     */
+    Collection<Task> getAllRunning() {
+        running + awsSimpleWorkflowService.openWorkflowExecutions.collect {
+            new WorkflowExecutionBeanOptions(it).asTask()
         }
+    }
 
-        task
+    /**
+     * @return all completed tasks (including SWF workflow executions within a recent time period)
+     */
+    Collection<Task> getAllCompleted() {
+        completed + awsSimpleWorkflowService.closedWorkflowExecutions.collect {
+            new WorkflowExecutionBeanOptions(it).asTask()
+        }
+    }
+
+    /**
+     * Looks up a task by its ID.
+     *
+     * @param id for task
+     * @return task or null if no task was found
+     */
+    Task getTaskById(String id) {
+        if (!id) { return null }
+        try {
+            new Retriable<Task>(
+                    work: {
+                        Task task = running.find { it.id == id }
+                        if (!task) { task = completed.find { it.id == id } }
+                        if (!task) {
+                            task = awsSimpleWorkflowService.getWorkflowExecutionInfoByTaskId(id)?.asTask()
+                        }
+                        if (!task) { throw new IllegalArgumentException("There is no task with id ${id}.") }
+                        task
+                    },
+                    firstDelayMillis: 300
+            ).performWithRetries()
+        } catch (CollectedExceptions ignore) {
+            return null
+        }
     }
 
     Collection<Task> getRunningTasksByObject(Link link, Region region) {
@@ -203,14 +233,20 @@ class TaskService {
     }
 
     void cancelTask(UserContext userContext, Task task) {
-        try {
-            task.thread.interrupt()
-            task.log("Cancelled by ${userContext.clientHostName}")
-            fail(task)
-        } catch (CancelledException ignored) {
-            // Thrown if task is cancelled while sleeping. Not an error.
-        } catch (Exception e) {
-            exception(task, e)
+        String cancelledByMessage = "Cancelled by ${userContext.username ?: 'user'}@${userContext.clientHostName}"
+        if (task.workflowExecution) {
+            WorkflowClientExternal client = flowService.getWorkflowClient(task.workflowExecution)
+            client.terminateWorkflowExecution(cancelledByMessage, task.toString(), ChildPolicy.TERMINATE)
+        } else {
+            try {
+                task.thread.interrupt()
+                task.log(cancelledByMessage)
+                fail(task)
+            } catch (CancelledException ignored) {
+                // Thrown if task is cancelled while sleeping. Not an error.
+            } catch (Exception e) {
+                exception(task, e)
+            }
         }
     }
 }

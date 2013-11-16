@@ -29,6 +29,9 @@ log4j = {
                 file: "${logDirectory}/asgard.log",
                 layout: pattern(conversionPattern: '[%d{ISO8601}] [%t] %c{4}    %m%n'),
                 datePattern: "'.'yyyy-MM-dd")
+
+        rollingFile name: "stacktrace", maxFileSize: 1024,
+                file: "${logDirectory}/stacktrace.log"
     }
 
     root {
@@ -49,6 +52,10 @@ log4j = {
 
     // Set for a specific service
     debug "grails.app.service.com.netflix.asgard.ServerService"
+
+    // Debug issue with occasional missing ELBs when creating the next ASG in a cluster.
+    debug 'com.netflix.asgard.ClusterController'
+    debug 'com.netflix.asgard.push.GroupCreateOperation'
 
     warn 'org.codehaus.groovy.grails'
 
@@ -128,7 +135,7 @@ cloud {
 
     throttleMillis = 400
 
-    // TODO: Delete these instance type hacks as soon as m3.xlarge, m3.2xlarge are in the AWS Java SDK enum instead
+    // TODO: Delete these instance type hacks when they are in the AWS Java SDK enum instead
     customInstanceTypes = [
             new InstanceTypeData(linuxOnDemandPrice: 0.580, hardwareProfile:
                     new HardwareProfile(instanceType: 'm3.xlarge', architecture: '64-bit',
@@ -142,8 +149,17 @@ cloud {
                             description: 'M3 Double Extra Large Instance',
                             ioPerformance: 'High', memory: '30 GiB',
                             storage: 'EBS storage only')),
+            new InstanceTypeData(linuxOnDemandPrice: 3.50, hardwareProfile:
+                    new HardwareProfile(instanceType: 'cr1.8xlarge', architecture: '64-bit',
+                            cpu: '88 EC2 Compute Units (2 x Intel Xeon E5-2670, eight-core)',
+                            description: 'Cluster High Memory',
+                            ioPerformance: '10 Gbps Ethernet', memory: '244 GiB',
+                            storage: '240 GiB instance 64-bit storage (2 x 120 GiB SSD)')),
     ]
+    spot.infoUrl = 'http://aws.amazon.com/ec2/spot-instances/'
 }
+
+cors.allow.origin.regex = '$.^' // Disable CORS support by default
 
 healthCheck {
     minimumCounts {
@@ -182,6 +198,7 @@ environments {
         plugin {
             refreshDelay = 5000
         }
+        workflow.taskList = "asgard_${System.getProperty('user.name')}"
     }
     test {
         server.online = false

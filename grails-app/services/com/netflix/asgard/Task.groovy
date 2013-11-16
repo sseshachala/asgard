@@ -15,14 +15,17 @@
  */
 package com.netflix.asgard
 
+import com.amazonaws.services.simpleworkflow.model.WorkflowExecution
+import groovy.transform.ToString
 import java.util.concurrent.CopyOnWriteArrayList
 import org.apache.commons.logging.LogFactory
 import org.joda.time.DateTime
 
-class Task {
+@ToString class Task {
     private static final logger = LogFactory.getLog(this)
 
     String id
+    WorkflowExecution workflowExecution
     UserContext userContext
     String env
     String name
@@ -42,6 +45,7 @@ class Task {
         def updateTimeString = updateTime.format("yyyy-MM-dd_HH:mm:ss")
         log << updateTimeString + ' ' + op
         logger.info "${updateTimeString} ${id}: {Ticket: ${userContext?.ticket?.trim()}} " +
+                "{User: ${userContext?.username}} " +
                 "{Client: ${userContext?.clientHostName} ${userContext?.clientIpAddress}} " +
                 "{Region: ${userContext?.region}} [${name}] ${operation}"
     }
@@ -52,7 +56,8 @@ class Task {
     }
 
     String getSummary() {
-        "Asgard task ${status} in ${env} ${userContext?.region} by ${userContext?.clientHostName}: ${name}"
+        "Asgard task ${status} in ${env} ${userContext?.region} by " +
+                "${userContext?.username ?: userContext?.clientHostName}: ${name}"
     }
 
     String getLogAsString() {
@@ -60,7 +65,8 @@ class Task {
     }
 
     Boolean isDone() {
-        status == "completed" || status == "failed"
+        'completed'.equalsIgnoreCase(status) || 'failed'.equalsIgnoreCase(status) || 'TIMED_OUT'.
+                equalsIgnoreCase(status)
     }
 
     /**

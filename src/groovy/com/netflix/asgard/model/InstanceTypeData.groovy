@@ -15,6 +15,9 @@
  */
 package com.netflix.asgard.model
 
+import com.amazonaws.services.ec2.model.InstanceType
+import java.text.NumberFormat
+
 /**
  * Hardware specifications and multiple types of pricing data for a type of machine available to use as an EC2 instance.
  */
@@ -65,12 +68,20 @@ final class InstanceTypeData {
     }
 
     /**
+     * @deprecated Prove this method is not used. Then delete it. Some new instance types are absent from the enum.
+     */
+    @Deprecated
+    InstanceType getInstanceType() {
+        InstanceType.fromValue(hardwareProfile.instanceType)
+    }
+
+    /**
      * Calculates the 30-day cost of running a Linux on-demand instance, prepended with a dollar sign.
      *
      * @return String the dollar-sign amount for a
      */
     String getMonthlyLinuxOnDemandPrice() {
         if (linuxOnDemandPrice == null) { return null }
-        '$' + linuxOnDemandPrice * 24 * 30
+        NumberFormat.getCurrencyInstance().format(linuxOnDemandPrice * 24 * 30)
     }
 }

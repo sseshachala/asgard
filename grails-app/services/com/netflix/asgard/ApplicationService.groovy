@@ -42,6 +42,7 @@ class ApplicationService implements CacheInitializer, InitializingBean {
     def awsEc2Service
     def awsLoadBalancerService
     Caches caches
+    def cloudReadyService
     def configService
     def fastPropertyService
     def mergedInstanceGroupingService
@@ -53,7 +54,7 @@ class ApplicationService implements CacheInitializer, InitializingBean {
         domainName = configService.applicationsDomain
 
         // Applications are stored only in the default region, so no multi region support needed here.
-        simpleDbClient = awsClientService.create(AmazonSimpleDB)
+        simpleDbClient = simpleDbClient ?: awsClientService.create(AmazonSimpleDB)
     }
 
     void initializeCaches() {
@@ -107,9 +108,9 @@ class ApplicationService implements CacheInitializer, InitializingBean {
         })
     }
 
-    AppRegistration getRegisteredApplication(UserContext userContext, String name, From from = From.AWS) {
-        if (!name) { return null }
-        name = name.toLowerCase()
+    AppRegistration getRegisteredApplication(UserContext userContext, String nameInput, From from = From.AWS) {
+        if (!nameInput) { return null }
+        String name = nameInput.toLowerCase()
         if (from == From.CACHE) {
             return caches.allApplications.get(name)
         }
@@ -125,33 +126,45 @@ class ApplicationService implements CacheInitializer, InitializingBean {
         Relationships.checkAppNameForLoadBalancer(name) ? getRegisteredApplication(userContext, name) : null
     }
 
-    void createRegisteredApplication(UserContext userContext, String name, String type, String description,
-                                     String owner, String email,
-                                     MonitorBucketType monitorBucketType) {
-        name = name.toLowerCase()
+    CreateApplicationResult createRegisteredApplication(UserContext userContext, String nameInput, String group,
+            String type, String description, String owner, String email, MonitorBucketType monitorBucketType,
+            boolean enableChaosMonkey) {
+        String name = nameInput.toLowerCase()
+        CreateApplicationResult result = new CreateApplicationResult()
+        result.appName = name
         if (getRegisteredApplication(userContext, name)) {
-            throw new IllegalStateException("Can't add Application $name. It already exists.")
+            result.appCreateException = new IllegalStateException("Can't add Application ${name}. It already exists.")
+            return result
         }
         String nowEpoch = new DateTime().millis as String
-        Collection<ReplaceableAttribute> attributes = buildAttributesList(type, description, owner, email,
+        Collection<ReplaceableAttribute> attributes = buildAttributesList(group, type, description, owner, email,
                 monitorBucketType, false)
         attributes << new ReplaceableAttribute('createTs', nowEpoch, false)
-
         String creationLogMessage = "Create registered app ${name}, type ${type}, owner ${owner}, email ${email}"
         taskService.runTask(userContext, creationLogMessage, { task ->
-            simpleDbClient.putAttributes(new PutAttributesRequest().withDomainName(domainName).
-                    withItemName(name.toUpperCase()).withAttributes(attributes))
+            try {
+                simpleDbClient.putAttributes(new PutAttributesRequest().withDomainName(domainName).
+                        withItemName(name.toUpperCase()).withAttributes(attributes))
+                result.appCreated = true
+            } catch (AmazonServiceException e) {
+                result.appCreateException = e
+            }
+            if (enableChaosMonkey) {
+                task.log("Enabling Chaos Monkey for ${name}.")
+                result.cloudReadyUnavailable = !cloudReadyService.enableChaosMonkeyForApplication(name)
+            }
         }, Link.to(EntityType.application, name))
         getRegisteredApplication(userContext, name)
+        result
     }
 
-    private Collection<ReplaceableAttribute> buildAttributesList(String type, String description, String owner,
-            String email, MonitorBucketType monitorBucketType,
-            Boolean replaceExistingValues) {
+    private Collection<ReplaceableAttribute> buildAttributesList(String group, String type, String description,
+            String owner, String email, MonitorBucketType monitorBucketType, Boolean replaceExistingValues) {
 
         Check.notNull(monitorBucketType, MonitorBucketType, 'monitorBucketType')
         String nowEpoch = new DateTime().millis as String
         Collection<ReplaceableAttribute> attributes = []
+        attributes << new ReplaceableAttribute('group', group ?: '', replaceExistingValues)
         attributes << new ReplaceableAttribute('type', Check.notEmpty(type), replaceExistingValues)
         attributes << new ReplaceableAttribute('description', Check.notEmpty(description), replaceExistingValues)
         attributes << new ReplaceableAttribute('owner', Check.notEmpty(owner), replaceExistingValues)
@@ -161,9 +174,9 @@ class ApplicationService implements CacheInitializer, InitializingBean {
         return attributes
     }
 
-    void updateRegisteredApplication(UserContext userContext, String name, String type, String desc, String owner,
-                                     String email, MonitorBucketType bucketType) {
-        Collection<ReplaceableAttribute> attributes = buildAttributesList(type, desc, owner, email,
+    void updateRegisteredApplication(UserContext userContext, String name, String group, String type, String desc,
+                                     String owner, String email, MonitorBucketType bucketType) {
+        Collection<ReplaceableAttribute> attributes = buildAttributesList(group, type, desc, owner, email,
                 bucketType, true)
         taskService.runTask(userContext,
                 "Update registered app ${name}, type ${type}, owner ${owner}, email ${email}", { task ->
@@ -232,3 +245,32 @@ class ApplicationService implements CacheInitializer, InitializingBean {
         (bucketType == MonitorBucketType.cluster) ? clusterName : appName
     }
 }
+
+/**
+ * Records the results of trying to create an Application.
+ */
+class CreateApplicationResult {
+    String appName
+    Boolean appCreated
+    Exception appCreateException
+    Boolean cloudReadyUnavailable // Just a warning, does not affect success.
+
+    String toString() {
+        StringBuilder output = new StringBuilder()
+        if (appCreated) {
+            output.append("Application '${appName}' has been created. ")
+        }
+        if (appCreateException) {
+            output.append("Could not create Application '${appName}': ${appCreateException}. ")
+        }
+        if (cloudReadyUnavailable) {
+            output.append('Chaos Monkey was not enabled because Cloudready is currently unavailable. ')
+        }
+        output.toString()
+    }
+
+    Boolean succeeded() {
+        appCreated && !appCreateException
+    }
+}
+

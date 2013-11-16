@@ -35,6 +35,8 @@ codenarc {
     }
     ruleSetFiles='file:grails-app/conf/CodeNarcRuleSet.groovy'
     maxPriority1Violations = 0
+    maxPriority2Violations = 0
+    maxPriority3Violations = 0
 }
 
 grails.project.dependency.resolution = {
@@ -80,7 +82,7 @@ grails.project.dependency.resolution = {
 
         compile(
                 // Amazon Web Services programmatic interface
-                'com.amazonaws:aws-java-sdk:1.3.23',
+                'com.amazonaws:aws-java-sdk:1.3.32',
         ) {
             // AWS defines their dependencies as open-ended, which causes problems when resolving.
             // See http://stackoverflow.com/a/7990573/869
@@ -88,7 +90,9 @@ grails.project.dependency.resolution = {
         }
 
         compile(
-                // Transitive dependencies of aws-java-sdk, but also used directly
+                // Transitive dependencies of aws-java-sdk, but also used directly.
+                // It would be great if we could upgrade httpcore and httpclient, but we can't until the AWS Java SDK
+                // upgrades its dependencies. If we simply upgrade these, then some Amazon calls fail.
                 'org.apache.httpcomponents:httpcore:4.1',
                 'org.apache.httpcomponents:httpclient:4.1.1',
 
@@ -118,7 +122,7 @@ grails.project.dependency.resolution = {
                 'org.jsoup:jsoup:1.6.1',
 
                 // Static analysis for Groovy code.
-                'org.codenarc:CodeNarc:0.17',
+                'org.codenarc:CodeNarc:0.19',
 
                 // This fixes ivy resolution issues we had with our transitive dependency on 1.4.
                 'commons-codec:commons-codec:1.5',
@@ -127,7 +131,18 @@ grails.project.dependency.resolution = {
                 'com.perforce:p4java:2010.1.269249',
 
                 // Rules for AWS named objects.
-                'com.netflix.frigga:frigga:0.3'
+                'com.netflix.frigga:frigga:0.6',
+
+                // Ease of use library for AWS SWF.
+                'com.netflix.glisten:glisten:0.2',
+
+                // Groovy concurrency framework.
+                'org.codehaus.gpars:gpars:1.0.0',
+
+                // Used for JSON parsing of AWS Simple Workflow Service metadata.
+                // Previously this was an indirect depencency through Grails itself, but this caused errors in some
+                // Grails environments.
+                'com.googlecode.json-simple:json-simple:1.1'
         ) { // Exclude superfluous and dangerous transitive dependencies
             excludes(
                     // Some libraries bring older versions of JUnit as a transitive dependency and that can interfere
@@ -137,6 +152,9 @@ grails.project.dependency.resolution = {
                     'mockito-core',
             )
         }
+
+        // Spock in Grails 2.2.x http://grails.org/plugin/spock
+        test "org.spockframework:spock-grails-support:0.7-groovy-2.0"
 
         // Optional dependency for Spock to support mocking objects without a parameterless constructor.
         test 'org.objenesis:objenesis:1.2'
@@ -149,7 +167,12 @@ grails.project.dependency.resolution = {
         compile ':shiro:1.1.4'
         compile ":standalone:1.1.1"
 
-        test ':spock:0.6'
+        runtime ":cors:1.0.4"
+
+        // Spock in Grails 2.2.x http://grails.org/plugin/spock
+        test(":spock:0.7") {
+            exclude "spock-grails-support"
+        }
 
         test ':code-coverage:1.2.5'
 

@@ -181,7 +181,7 @@ class ServerService implements InitializingBean {
 
     private Boolean checkHealth(Server server) {
         assert server.name in allServerNames
-        restClientService.getResponseCode("http://${server.name}${serverSuffix}/healthcheck") == 200
+        restClientService.getResponseCode("http://${server.name}${serverSuffix}/healthcheck/caches") == 200
     }
 
     private String nowYearMonthDayHour() {
@@ -257,12 +257,30 @@ class ServerService implements InitializingBean {
         trafficMover?.isAlive() ?: false
     }
 
+    /**
+     * Gets the time the server has been up, expressed as a short string like '13s' or '6h 20m 3s'.
+     *
+     * @return the time the server has been up, as an abbreviated string
+     */
+    String getUptimeString() {
+        Time.format(serverStartupTime, new DateTime())
+    }
+
     Integer getMinutesSinceStartup() {
         Minutes.minutesBetween(serverStartupTime, new DateTime()).minutes
     }
 
     Integer getHoursSinceStartup() {
         Hours.hoursBetween(serverStartupTime, new DateTime()).hours
+    }
+
+    /**
+     * Gets the Asgard version number.
+     *
+     * @return the version of Asgard that is currently running
+     */
+    String getVersion() {
+        grailsApplication.metadata['app.version']
     }
 
     private String determineActiveServerName(Environment env) {

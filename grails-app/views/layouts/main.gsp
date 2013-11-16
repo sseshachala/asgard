@@ -53,7 +53,7 @@
     <g:if test="${!pageProperty(name: 'meta.hideNav')}">
       <div class="region">
         <form action="/" method="GET">
-          <g:select title="Switch to a different Amazon region" name="region" id="regionSwitcher"
+          <g:select title="Switch to a different Amazon region" name="region" class="noSelect2" id="regionSwitcher"
                     value="${region.code}" from="${regions}" optionKey="code" optionValue="description"/><br/>
           <img src="${resource(dir: 'images/worldmap', file: region.mapImageFileName)}" title="${region.description} is your current region"/>
         </form>
@@ -69,16 +69,16 @@
               <g:if test="${apiTokenEnabled}">
                 <li><g:link controller="apiToken" action="create">Generate API Token</g:link></li>
               </g:if>
-              <li><g:link controller="auth" action="signOut" params="${[targetUri: request.requestURL.encodeAsHTML()]}">Logout</g:link></li>
+              <li><g:link controller="auth" action="signOut" params="${[targetUri: targetUri]}">Logout</g:link></li>
             </ul>
           </div>
         </shiro:isLoggedIn>
         <shiro:isNotLoggedIn>
-          <g:link controller="auth" action="login" class="login" params="${[targetUri: request.requestURL.encodeAsHTML()]}">Login</g:link> 
+          <g:link controller="auth" action="login" class="login" params="${[targetUri: targetUri]}">Login</g:link>
         </shiro:isNotLoggedIn>
       </g:if>
       <div class="search" title="Find entities by name">
-        <form action="/search" method="GET">
+        <form action="/search" method="GET" class="allowEnterKeySubmit">
           %{--<input type="search" results="10" autosave="asgard${env}globalsearch" name="q" placeholder="Global search by names" value="${params.q}">--}%
         </form>
       </div>
@@ -91,11 +91,10 @@
        <g:link class="applications" controller="application" action="list">App</g:link>
        <ul>
          <li class="menuButton"><g:link class="applications" controller="application" action="list">Applications</g:link></li>
+         <li class="menuButton"><g:link class="stacks" controller="stack" action="list">Stacks</g:link></li>
          <li class="menuButton"><g:link class="users" controller="application" action="owner">Owners</g:link></li>
          <li class="menuButton"><g:link class="securityGroups" controller="security" action="list">Security Groups</g:link></li>
-         <g:if test="${platformserviceExists}">
-           <li class="menuButton"><g:link class="fastProperties" controller="fastProperty" action="list">Fast Properties</g:link></li>
-         </g:if>
+         <g:extLinkToPropertiesConsole />
        </ul>
      </li>
      <li class="menuButton"><g:link class="images" controller="image" action="list">AMI</g:link></li>
@@ -112,9 +111,9 @@
      </li>
      <li class="menuButton"><g:link class="loadBalancers" controller="loadBalancer" action="list">ELB</g:link></li>
      <li class="menuButton">
-         <g:link class="instances" controller="instance" action="list">EC2</g:link>
+         <g:link class="instances" controller="instance" action="${discoveryExists ? 'apps' : 'list'}">EC2</g:link>
          <ul>
-           <li class="menuButton"><g:link class="instances" controller="instance" action="list">Instances</g:link></li>
+           <li class="menuButton"><g:link class="instances" controller="instance" action="${discoveryExists ? 'apps' : 'list'}">Instances</g:link></li>
            <li class="menuButton"><g:link class="instanceTypes" controller="instanceType" action="list">Instance Types</g:link></li>
            <g:if test="${spotInstancesAreAppropriate}">
              <li class="menuButton"><g:link class="spotInstanceRequest" controller="spotInstanceRequest" action="list">Spot Instance Requests</g:link></li>
@@ -140,17 +139,24 @@
    </ul>
   </g:if>
   <div class="clear"></div>
+  <g:if test="${bleskDataUrl}">
+    <div id="blesk" data-appid="asgard" data-server="${bleskDataUrl}" data-context-env="${env}" data-context-region="${region.code}"></div>
+  </g:if>
   <g:layoutBody/>
   <script type="text/javascript">
     window.browserGlobalsFromServer = {
       groupResizeDefaultBatchSize: ${GroupResizeOperation.DEFAULT_BATCH_SIZE},
       params: ${params as JSON},
-      region: '${region.code}'
+      region: '${region.code}',
+      requireLoginForEdit: ${requireLoginForEdit}
     };
   </script>
   <script type="text/javascript" src="${resource(dir: 'js', file: 'jquery.js')}?v=${build}"></script>
-  <script defer type="text/javascript" src="${resource(dir: 'js', file: 'custom.js')}?v=${build}"></script>
   <script defer type="text/javascript" src="${resource(dir: 'js/select2-3.2', file: 'select2.min.js')}?v=${build}"></script>
+  <script defer type="text/javascript" src="${resource(dir: 'js', file: 'custom.js')}?v=${build}"></script>
+  <g:if test="${bleskJavaScriptUrl}">
+    <script defer type="text/javascript" src="${bleskJavaScriptUrl}?v=${build}"></script>
+  </g:if>
   <g:render template="/layouts/occasion"/>
 </body>
 </html>

@@ -26,6 +26,7 @@ import com.netflix.asgard.Spring
 import com.netflix.asgard.Task
 import com.netflix.asgard.Time
 import com.netflix.asgard.UserContext
+import com.netflix.asgard.model.ApplicationInstance
 import com.netflix.asgard.model.AutoScalingGroupData
 import com.netflix.asgard.model.AutoScalingProcessType
 import org.apache.commons.logging.LogFactory
@@ -50,6 +51,7 @@ class GroupResizeOperation extends AbstractPushOperation {
     def awsEc2Service
     def discoveryService
     def flagService
+    def restClientService
 
     UserContext userContext
     String autoScalingGroupName
@@ -74,7 +76,7 @@ class GroupResizeOperation extends AbstractPushOperation {
     }
 
     private String appName
-    private def thisOperation = this
+    private GroupResizeOperation thisOperation = this
     private DateTime lastBatchStartTime = Time.now()
     private static Duration MAX_TIME_PER_BATCH = Duration.standardMinutes(25)
 
@@ -252,7 +254,7 @@ class GroupResizeOperation extends AbstractPushOperation {
         // Update the caches for instances
         group?.instances?.collect { it.instanceId }?.each { String id ->
             awsEc2Service.getInstance(userContext, id)
-            discoveryService.getAppInstance(userContext, appName, id)
+            discoveryService.getAppInstance(userContext, id)
             Time.sleepCancellably(discoveryService.MILLIS_DELAY_BETWEEN_DISCOVERY_CALLS)
         }
         // Update the caches for ASG and cluster
@@ -271,11 +273,12 @@ class GroupResizeOperation extends AbstractPushOperation {
         while (!idsOfInstancesThatAreNotYetHealthy.empty) {
             if (hasTooMuchTimePassedSinceBatchStart()) {
                 Integer unhealthyCount = idsOfInstancesThatAreNotYetHealthy.size()
+                String regardingUpStatus = initialTraffic == InitialTraffic.ALLOWED ? ' with status "UP"' : ''
                 throw new PushException("Timeout waiting ${Time.format(calculateMaxTimePerBatch())} " +
-                        "for instances to register with Eureka and pass a health check. " +
+                        "for instances to register with Eureka${regardingUpStatus} and pass a health check. " +
                         "Expected ${newMin} discoverable, healthy instance${newMin == 1 ? '' : 's'}, but " +
                         "auto scaling group '${autoScalingGroupName}' still has ${unhealthyCount} " +
-                        "undiscoverable or unhealthy instance${unhealthyCount == 1 ? '': 's'} " +
+                        "undiscoverable or unhealthy instance${unhealthyCount == 1 ? '' : 's'} " +
                         "including ${idsOfInstancesThatAreNotYetHealthy}. Are the new instances having errors?")
             }
             Time.sleepCancellably(ITERATION_WAIT_MILLIS)
@@ -289,15 +292,27 @@ class GroupResizeOperation extends AbstractPushOperation {
 
     private Collection<String> findInstancesNotYetHealthy(Collection<String> instanceIds) {
         instanceIds.findAll { String id ->
-            String healthCheckUrl = getHealthCheckUrl(id)
+
+            // Still waiting for Discovery?
+            Time.sleepCancellably(discoveryService.MILLIS_DELAY_BETWEEN_DISCOVERY_CALLS)
+            ApplicationInstance instance = discoveryService.getAppInstance(userContext, id)
+            if (instance == null) {
+                return true // Missing in Discovery
+            }
+
+            // If traffic is allowed, then any instance that is not "UP" in Eureka should be considered unhealthy
+            if (initialTraffic == InitialTraffic.ALLOWED && instance?.status != 'UP') {
+                return true
+            }
+
+            String healthCheckUrl = instance.healthCheckUrl
             if (healthCheckUrl) {
-                Integer responseCode = awsEc2Service.getRepeatedResponseCode(healthCheckUrl)
+                Integer responseCode = restClientService.getRepeatedResponseCode(healthCheckUrl)
                 return responseCode != 200
             }
-            // Still waiting for Discovery?
-            boolean missingInDiscovery = !discoveryService.getAppInstance(userContext, appName, id)
-            Time.sleepCancellably(discoveryService.MILLIS_DELAY_BETWEEN_DISCOVERY_CALLS)
-            missingInDiscovery
+
+            // No health check URL found
+            return true
         }
     }
 
@@ -318,26 +333,6 @@ class GroupResizeOperation extends AbstractPushOperation {
             discoveryService.disableAppInstances(userContext, appName, upInstanceIds, task)
             task.log("${upInstanceIds} deactivated in Eureka")
         }
-    }
-
-    private Map<String, String> instanceIdsToHealthCheckUrls = new HashMap<String, String>()
-
-    /**
-     * Retrieves the health check URL of an instance from Discovery, and memoizes the result.
-     *
-     * @param instanceIdsToHealthCheckUrls a caching map of instance ids to health check urls for
-     * @param id the instance id
-     * @return String the health check URL of the instance or null if not found
-     */
-    private String getHealthCheckUrl(String id) {
-        String healthCheckUrl = instanceIdsToHealthCheckUrls[id]
-        if (!healthCheckUrl) {
-            healthCheckUrl = discoveryService.getAppInstance(userContext, appName, id)?.healthCheckUrl
-            if (healthCheckUrl) {
-                instanceIdsToHealthCheckUrls.put(id, healthCheckUrl)
-            }
-        }
-        healthCheckUrl
     }
 
     private void waitForInstancesToTerminate() {

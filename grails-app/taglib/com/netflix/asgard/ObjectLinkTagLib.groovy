@@ -15,15 +15,19 @@
  */
 package com.netflix.asgard
 
+import com.netflix.asgard.model.SimpleQueue
 import org.codehaus.groovy.grails.plugins.web.taglib.ApplicationTagLib
 
 class ObjectLinkTagLib extends ApplicationTagLib {
+
+    def configService
 
     def linkObject = { attrs, body ->
         String objectId = attrs.remove('name')
         if (!objectId) { return }
         String objectType = attrs.remove('type')
         EntityType type = objectType ? EntityType.fromName(objectType) : EntityType.fromId(objectId)
+        type?.entitySpecificLinkGeneration(attrs, objectId)
         attrs['class'] = type.name()
         attrs.controller = type.name()
         attrs.action = attrs.action ?: 'show'
@@ -56,19 +60,36 @@ class ObjectLinkTagLib extends ApplicationTagLib {
      * @attr mapping The named URL mapping to use to rewrite the link
      * @attr event Webflow _eventId parameter
      */
-    def createLink = { attrs ->
+    Closure createLink = { attrs ->
 
         String controller = attrs.controller ?: controllerName
         if (grailsApplication.controllerNamesToContextParams[(controller)].contains('region')) {
             // Get value for region parameter from tag attribute or request attribute. Ensure link has region parameter.
             String region = attrs.region ? attrs.remove('region') : request['region'].toString()
-            if (attrs.params)
+            if (attrs.params) {
                 attrs.params.put('region', region)
-            else {
+            } else {
                 attrs.params = ['region': region]
             }
         }
         super.createLink.call(attrs)
     }
 
+    /**
+     * Shows a styled version of an SNS subscription endpoint which will be a link if it is an SQS queue.
+     */
+    def snsSubscriptionEndpoint = { attrs, body ->
+        String endpoint = body()
+        SimpleQueue queue = SimpleQueue.fromArn(endpoint)
+        String accountNumber = configService.awsAccountNumber
+        if (queue?.accountNumber == accountNumber) {
+            out << linkObject([
+                    type: 'queue',
+                    name: queue.name,
+                    region: queue.region
+            ], { endpoint })
+        } else {
+            out << endpoint
+        }
+    }
 }

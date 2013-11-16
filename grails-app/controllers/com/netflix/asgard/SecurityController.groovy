@@ -15,8 +15,11 @@
  */
 package com.netflix.asgard
 
+import com.amazonaws.services.autoscaling.model.LaunchConfiguration
+import com.amazonaws.services.ec2.model.Instance
 import com.amazonaws.services.ec2.model.IpPermission
 import com.amazonaws.services.ec2.model.SecurityGroup
+import com.amazonaws.services.elasticloadbalancing.model.LoadBalancerDescription
 import com.amazonaws.services.elasticloadbalancing.model.SourceSecurityGroup
 import com.netflix.grails.contextParam.ContextParam
 import grails.converters.JSON
@@ -26,11 +29,12 @@ import grails.converters.XML
 class SecurityController {
 
     def applicationService
+    def awsAutoScalingService
     def awsEc2Service
     def awsLoadBalancerService
     def configService
 
-    def static allowedMethods = [save: 'POST', update: 'POST', delete: 'POST']
+    static allowedMethods = [save: 'POST', update: 'POST', delete: 'POST']
 
     def index = { redirect(action: 'list', params: params) }
 
@@ -64,13 +68,21 @@ class SecurityController {
         }
         group.ipPermissions.sort { it.userIdGroupPairs ? it.userIdGroupPairs[0].groupName : it.fromPort }
         group.ipPermissions.each { it.userIdGroupPairs.sort { it.groupName } }
+
+        List<LaunchConfiguration> launchConfigs = awsAutoScalingService.getLaunchConfigurationsForSecurityGroup(
+                userContext, group)
+        Collection<Instance> instances = awsEc2Service.getInstancesWithSecurityGroup(userContext, group)
+        List<LoadBalancerDescription> lbs = awsLoadBalancerService.getLoadBalancersWithSecurityGroup(userContext, group)
+
         def details = [
                 group: group,
                 app: applicationService.getRegisteredApplication(userContext, group.groupName),
                 accountNames: configService.awsAccountNames,
-                editable: awsEc2Service.isSecurityGroupEditable(group.groupName)
+                editable: awsEc2Service.isSecurityGroupEditable(group.groupName),
+                launchConfigs: launchConfigs,
+                instances: instances,
+                elbs: lbs
         ]
-        // TODO referenced-from lists would be nice too
         withFormat {
             html { return details }
             xml { new XML(details).render(response) }
@@ -162,8 +174,8 @@ class SecurityController {
     }
 
     private void updateSecurityIngress(UserContext userContext, SecurityGroup targetGroup, List<String> selectedGroups, Map portMap) {
-        awsEc2Service.getSecurityGroups(userContext).each {srcGroup ->
-            boolean wantAccess = selectedGroups.any {it == srcGroup.groupName} && portMap[srcGroup.groupName] != ''
+        awsEc2Service.getSecurityGroups(userContext).each { srcGroup ->
+            boolean wantAccess = selectedGroups.any { it == srcGroup.groupName } && portMap[srcGroup.groupName] != ''
             String wantPorts = wantAccess ? portMap[srcGroup.groupName] : null
             List<IpPermission> wantPerms = awsEc2Service.permissionsFromString(wantPorts)
             awsEc2Service.updateSecurityGroupPermissions(userContext, targetGroup, srcGroup, wantPerms)
@@ -202,7 +214,7 @@ class SecurityCreateCommand {
 
     static constraints = {
 
-        appName(nullable: false, blank: false, validator: { value, command->
+        appName(nullable: false, blank: false, validator: { value, command ->
             UserContext userContext = UserContext.of(Requests.request)
             if (!Relationships.checkName(value)) {
                 return 'application.name.illegalChar'
@@ -218,7 +230,7 @@ class SecurityCreateCommand {
             }
         })
 
-        detail(nullable: true, validator: { value, command->
+        detail(nullable: true, validator: { value, command ->
             if (value && !Relationships.checkDetail(value)) {
                 return 'The detail must be empty or consist of alphanumeric characters and hyphens'
             }

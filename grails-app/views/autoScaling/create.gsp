@@ -33,6 +33,8 @@
       </div>
     </g:hasErrors>
     <g:form action="save" method="post" class="validate">
+      <g:hiddenField name="requestedFromGui" value="true" />
+      <g:hiddenField name="appWithClusterOptLevel" value="false" />
       <g:render template="/common/compoundName" />
       <div>
         <table>
@@ -42,11 +44,19 @@
                 <h2>Auto Scaling</h2>
               </td>
             </tr>
-            <g:render template="autoScalingOptions" />
+            <g:render template="autoScalingOptions" model="[manualStaticSizingNeeded: true]" />
             <g:render template="/loadBalancer/selection"/>
           </tbody>
           <g:render template="/launchConfiguration/launchConfigOptions" />
+          <tbody class="clusterChaosMonkeyOptions ${params.appName in appsWithClusterOptLevel ? '' : 'concealed'}">
+            <g:render template="/common/chaosMonkeyOptions" />
+          <tbody>
         </table>
+        <ul id="appsWithClusterOptLevel" class="concealed">
+          <g:each var="app" in="${appsWithClusterOptLevel}">
+            <li>${app}</li>
+          </g:each>
+        </ul>
       </div>
       <div class="buttons">
         <g:buttonSubmit class="save" action="save">Create New Auto Scaling Group</g:buttonSubmit>

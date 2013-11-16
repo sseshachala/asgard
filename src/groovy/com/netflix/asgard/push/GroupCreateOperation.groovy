@@ -80,7 +80,7 @@ class GroupCreateOperation extends AbstractPushOperation {
                     withKeyName(options.keyName).withRamdiskId(options.ramdiskId).
                     withSecurityGroups(options.common.securityGroups).
                     withIamInstanceProfile(options.iamInstanceProfile).
-                    withSpotPrice(options.spotPrice)
+                    withSpotPrice(options.spotPrice).withEbsOptimized(options.ebsOptimized)
 
             final Collection<AutoScalingProcessType> suspendedProcesses = Sets.newHashSet()
             if (options.zoneRebalancingSuspended) {
@@ -91,8 +91,9 @@ class GroupCreateOperation extends AbstractPushOperation {
             }
 
             CreateAutoScalingGroupResult result = awsAutoScalingService.createLaunchConfigAndAutoScalingGroup(
-                    options.common.userContext, groupTemplate, launchConfigTemplate, suspendedProcesses,
-                    task)
+                    options.common.userContext, groupTemplate, launchConfigTemplate, suspendedProcesses, false, task)
+            log.debug """GroupCreateOperation.start for Cluster '${clusterName}' Group created with Load Balancers: \
+${groupTemplate.loadBalancerNames} and result ${result}"""
             task.log(result.toString())
             if (result.succeeded()) {
                 // Add scalingPolicies to ASG. In the future this might need to be its own operation for reuse.
@@ -100,7 +101,7 @@ class GroupCreateOperation extends AbstractPushOperation {
                 awsAutoScalingService.createScheduledActions(options.common.userContext, options.scheduledActions, task)
 
                 // If the user wanted any instances then start a resize operation.
-                if (options.minSize > 0) {
+                if (options.minSize > 0 || options.desiredCapacity > 0) {
                     GroupResizeOperation operation = new GroupResizeOperation(userContext: options.common.userContext,
                             autoScalingGroupName: options.common.groupName,
                             eventualMin: options.minSize, newMin: options.minSize,

@@ -19,13 +19,11 @@ import com.netflix.asgard.server.ServerState
 import com.netflix.asgard.server.SwitchAttemptResult
 import grails.converters.JSON
 import grails.converters.XML
-import org.codehaus.groovy.grails.commons.ApplicationHolder
 
 class ServerController {
 
     def serverService
     def taskService
-    static Set<String> hostNames = new TreeSet<String>()
 
     def index = { render InetAddress.localHost.hostName }
 
@@ -42,7 +40,7 @@ class ServerController {
 
     def ip = { render InetAddress.localHost.hostAddress }
 
-    def version = { render "${ApplicationHolder.application.metadata['app.version']}" }
+    def version = { render serverService.version }
 
     def build = { render "${grailsApplication.config.build.number}" }
 
@@ -52,11 +50,11 @@ class ServerController {
 
     def env = { render "${grailsApplication.config.cloud.accountName}" }
 
-    def users = { render hostNames.join("\n") }
-
     def hoursSinceStartup = { render "${serverService.getHoursSinceStartup()}" }
 
     def minutesSinceStartup = { render "${serverService.getMinutesSinceStartup()}" }
+
+    def uptime = { render "${serverService.getUptimeString()}" }
 
     def moveTraffic = {
         String targetServer = pickServer(params)
@@ -79,7 +77,7 @@ class ServerController {
     }
 
     def runningTaskCount = {
-        render taskService.getRunning().size() as String
+        render taskService.getRunningInMemory().size() as String
     }
 
     /**

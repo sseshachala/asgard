@@ -18,12 +18,13 @@ package com.netflix.asgard
 import com.google.common.collect.Lists
 import com.netflix.asgard.joke.FailureImage
 import com.netflix.asgard.joke.ImageAttributions
+import java.security.SecureRandom
 
 class JokeService {
 
     def configService
 
-    private static final Random RANDOM = new Random()
+    private static final Random RANDOM = new SecureRandom()
 
     private final List<String> exclamations = ['Oh snap', 'Oops', 'Whoops', 'Sorry', 'My bad', 'Uh oh', 'Shoot',
             'Bummer', 'Blast', 'Oh no', 'Holy guacamole', 'Frak', "D'oh", 'Woah'].asImmutable()
@@ -56,7 +57,7 @@ class JokeService {
         List<FailureImage> failureImages = Lists.newArrayList(failureImages)
         try {
             failureImages += new File("${configService.asgardHome}/images/failure").listFiles(IMAGE_FILE_NAME_FILTER).
-                    collect { new FailureImage(path: "/externalImage/failure/${it.name}")  }
+                    collect { new FailureImage(path: "/externalImage/failure/${it.name}") }
         } catch (Exception e) {
             log.error('Error loading failure images', e)
         }

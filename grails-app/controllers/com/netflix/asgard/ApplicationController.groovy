@@ -32,10 +32,13 @@ class ApplicationController {
     def awsEc2Service
     def awsAutoScalingService
     def awsLoadBalancerService
+    def cloudReadyService
     def configService
     def discoveryService
 
-    def static allowedMethods = [save: 'POST', update: 'POST', delete: 'POST', securityUpdate: 'POST']
+    static allowedMethods = [save: 'POST', update: 'POST', delete: 'POST', securityUpdate: 'POST']
+
+    static editActions = ['security']
 
     def index = { redirect(action: 'list', params: params) }
 
@@ -90,7 +93,7 @@ class ApplicationController {
 
         // Sort by number of instances descending, then by number of auto scaling groups descending
         List<Owner> owners = (ownerNamesToOwners.values() as List).
-                sort { -1 * it.autoScalingGroupCount}.sort { -1 * it.instanceCount }
+                sort { -1 * it.autoScalingGroupCount }.sort { -1 * it.instanceCount }
 
         withFormat {
             html { [owners: owners] }
@@ -131,6 +134,7 @@ class ApplicationController {
                     groups.collect { Relationships.clusterFromGroupName(it.autoScalingGroupName) }.unique()
             request.alertingServiceConfigUrl = configService.alertingServiceConfigUrl
             SecurityGroup appSecurityGroup = awsEc2Service.getSecurityGroup(userContext, name)
+            boolean isChaosMonkeyActive = cloudReadyService.isChaosMonkeyActive(userContext.region)
             def details = [
                     app: app,
                     strictName: Relationships.checkStrictName(app.name),
@@ -139,7 +143,9 @@ class ApplicationController {
                     balancers: awsLoadBalancerService.getLoadBalancersForApp(userContext, name),
                     securities: awsEc2Service.getSecurityGroupsForApp(userContext, name),
                     appSecurityGroup: appSecurityGroup,
-                    launches: awsAutoScalingService.getLaunchConfigurationsForApp(userContext, name)
+                    launches: awsAutoScalingService.getLaunchConfigurationsForApp(userContext, name),
+                    isChaosMonkeyActive: isChaosMonkeyActive,
+                    chaosMonkeyEditLink: cloudReadyService.constructChaosMonkeyEditLink(userContext.region, app.name)
             ]
             withFormat {
                 html { return details }
@@ -152,7 +158,10 @@ class ApplicationController {
     static String[] typeList = ['Standalone Application', 'Web Application', 'Web Service']
 
     def create = {
-        ['typeList' : typeList]
+        [
+                typeList: typeList,
+                isChaosMonkeyActive: cloudReadyService.isChaosMonkeyActive()
+        ]
     }
 
     def save = { ApplicationCreateCommand cmd ->
@@ -161,20 +170,21 @@ class ApplicationController {
         } else {
             String name = params.name
             UserContext userContext = UserContext.of(request)
+            String group = params.group
             String type = params.type
             String desc = params.description
             String owner = params.owner
             String email = params.email
             String monitorBucketTypeString = params.monitorBucketType
-            try {
-                MonitorBucketType bucketType = Enum.valueOf(MonitorBucketType, monitorBucketTypeString)
-                applicationService.createRegisteredApplication(userContext, name, type, desc, owner, email,
-                        bucketType)
-                flash.message = "Application '${name}' has been created."
+            boolean enableChaosMonkey = params.chaosMonkey == 'enabled'
+            MonitorBucketType bucketType = Enum.valueOf(MonitorBucketType, monitorBucketTypeString)
+            CreateApplicationResult result = applicationService.createRegisteredApplication(userContext, name, group,
+                    type, desc, owner, email, bucketType, enableChaosMonkey)
+            flash.message = result.toString()
+            if (result.succeeded()) {
                 redirect(action: 'show', params: [id: name])
-            } catch (Exception e) {
-                flash.message = "Could not create Application: ${e}"
-                chain(action: 'create', model: [cmd: cmd], params: params) // Use chain to pass errors and params
+            } else {
+                chain(action: 'create', model: [cmd: cmd], params: params)
             }
         }
     }
@@ -190,6 +200,7 @@ class ApplicationController {
     def update = {
         String name = params.name
         UserContext userContext = UserContext.of(request)
+        String group = params.group
         String type = params.type
         String desc = params.description
         String owner = params.owner
@@ -197,7 +208,7 @@ class ApplicationController {
         String monitorBucketTypeString = params.monitorBucketType
         try {
             MonitorBucketType bucketType = Enum.valueOf(MonitorBucketType, monitorBucketTypeString)
-            applicationService.updateRegisteredApplication(userContext, name, type, desc, owner, email,
+            applicationService.updateRegisteredApplication(userContext, name, group, type, desc, owner, email,
                     bucketType)
             flash.message = "Application '${name}' has been updated."
         } catch (Exception e) {
@@ -259,10 +270,12 @@ class ApplicationController {
 
     // Security Group permission updating logic
 
-    private void updateSecurityEgress(UserContext userContext, SecurityGroup srcGroup, List<String> selectedGroups, Map portMap) {
-        awsEc2Service.getSecurityGroups(userContext).each {SecurityGroup targetGroup ->
-            boolean wantAccess = selectedGroups.any {it == targetGroup.groupName} && portMap[targetGroup.groupName] != ''
-            String  wantPorts = wantAccess ? portMap[targetGroup.groupName] : null
+    private void updateSecurityEgress(UserContext userContext, SecurityGroup srcGroup, List<String> selectedGroups,
+                                      Map portMap) {
+        awsEc2Service.getSecurityGroups(userContext).each { SecurityGroup targetGroup ->
+            boolean wantAccess = selectedGroups.any { it == targetGroup.groupName } &&
+                    portMap[targetGroup.groupName] != ''
+            String wantPorts = wantAccess ? portMap[targetGroup.groupName] : null
             List<IpPermission> wantPerms = awsEc2Service.permissionsFromString(wantPorts)
             awsEc2Service.updateSecurityGroupPermissions(userContext, targetGroup, srcGroup, wantPerms)
         }
@@ -271,11 +284,17 @@ class ApplicationController {
 }
 
 class ApplicationCreateCommand {
+
+    def cloudReadyService
+
     String name
     String email
     String type
     String description
     String owner
+    String chaosMonkey
+    boolean requestedFromGui
+
     static constraints = {
         name(nullable: false, blank: false, size: 1..Relationships.APPLICATION_MAX_LENGTH,
                 validator: { value, command ->
@@ -290,5 +309,14 @@ class ApplicationCreateCommand {
         type(nullable: false, blank: false)
         description(nullable: false, blank: false)
         owner(nullable: false, blank: false)
+        chaosMonkey(nullable: true, validator: { value, command ->
+            if (!command.chaosMonkey) {
+                boolean isChaosMonkeyChoiceNeglected = command.cloudReadyService.isChaosMonkeyActive() &&
+                        command.requestedFromGui
+                if (isChaosMonkeyChoiceNeglected) {
+                    return 'chaosMonkey.optIn.missing.error'
+                }
+            }
+        })
     }
 }

@@ -29,6 +29,13 @@
       <g:if test="${flash.message}">
         <div class="message">${flash.message}</div>
       </g:if>
+      <g:if test="${params.autoDeploy}">
+        <div class="buttons">
+          <g:link class="deploy" action="prepareDeployment"
+                  params="[id: cluster.name]">Prepare Automated Deployment</g:link>
+          <g:link class="create" action="prepareNextAsg" params="[id: cluster.name]">Create Next Group '${nextGroupName}'</g:link>
+        </div>
+      </g:if>
       <p>
         Recommended next step: <br/>
         <em>${recommendedNextStep}</em>
@@ -77,7 +84,7 @@
               <div class="deleting">${autoScalingGroup.status}</div>
             </g:if>
             <g:else>
-              <div class="buttons">
+              <div class="buttons requireLogin">
                 <g:buttonSubmit class="resize" action="resize" value="Resize" /> <label for="minAndMaxSize_${autoScalingGroup.autoScalingGroupName}">to</label>
                 <g:if test="${autoScalingGroup.minSize == autoScalingGroup.maxSize}"  >
                   <input type="text" size="2" class="groupSize number" id="minAndMaxSize_${autoScalingGroup.autoScalingGroupName}" name="minAndMaxSize" value="${autoScalingGroup.maxSize}"/>
@@ -97,8 +104,8 @@
               <div class="buttons">
                 <g:buttonSubmit class="delete" action="delete" value="Delete"
                                 data-warning="Terminate: ${autoScalingGroup.instances.size()} instances and delete Auto Scaling Group '${autoScalingGroup.autoScalingGroupName}'?"/>
-                <g:buttonSubmit class="trafficDisable" action="deactivate" value="Disable" />
-                <g:buttonSubmit class="trafficEnable" action="activate" value="Enable" />
+                <g:buttonSubmit class="requireLogin trafficDisable" action="deactivate" value="Disable" />
+                <g:buttonSubmit class="requireLogin trafficEnable" action="activate" value="Enable" />
               </div>
             </g:else>
             <table class="tiny">
@@ -154,33 +161,40 @@
       </g:each>
       <g:if test="${okayToCreateGroup}">
         <li class="clusterAsgForm create hideAdvancedItems">
-          <g:form method="post" class="validate" action="createNextGroup">
-            <g:hiddenField name="name" value="${cluster.name}" />
-            <g:hiddenField name="noOptionalDefaults" value="true" />
-            <h2>Create Next Group:</h2>
-            <span class="toggle fakeLink" id="showAdvancedOptionsToCreateNextGroup">Advanced Options</span>
-            <div class="clear"></div>
-            <h2>${nextGroupName}</h2>
-            <table>
-              <tr class="advanced"><td colspan="2"><h2>Auto Scaling</h2></td></tr>
-              <g:render template="/autoScaling/autoScalingOptions" />
-              <g:render template="/loadBalancer/selection"/>
-              <g:render template="/launchConfiguration/launchConfigOptions" />
-              <g:render template="/push/startupOptions" />
-              <tr class="advanced">
-                <td>
-                  <label for="trafficAllowed">Enable traffic?</label>
-                </td>
-                <td>
-                  <input id="trafficAllowed" type="checkbox" name="trafficAllowed" checked="checked" />
-                  <label for="trafficAllowed">Send client requests to new instances</label>
-                </td>
-              </tr>
-            </table>
-            <div class="buttons">
-              <g:buttonSubmit class="create" action="createNextGroup" value="Create Next Group ${nextGroupName}" />
-            </div>
-          </g:form>
+          <g:if test="${!requireLoginForEdit}">
+            <g:form method="post" class="validate" action="createNextGroup">
+              <g:hiddenField name="name" value="${cluster.name}" />
+              <g:hiddenField name="noOptionalDefaults" value="true" />
+              <h2>Create Next Group:</h2>
+              <span class="toggle fakeLink" id="showAdvancedOptionsToCreateNextGroup">Advanced Options</span>
+              <div class="clear"></div>
+              <h2>${nextGroupName}</h2>
+              <table>
+                <tr class="advanced"><td colspan="2"><h2>Auto Scaling</h2></td></tr>
+                <g:render template="/autoScaling/autoScalingOptions" />
+                <g:render template="/loadBalancer/selection"/>
+                <g:render template="/launchConfiguration/launchConfigOptions" />
+                <g:render template="/push/startupOptions" />
+                <tr class="advanced">
+                  <td>
+                    <label for="trafficAllowed">Enable traffic?</label>
+                  </td>
+                  <td>
+                    <input id="trafficAllowed" type="checkbox" name="trafficAllowed" checked="checked" />
+                    <label for="trafficAllowed">Send client requests to new instances</label>
+                  </td>
+                </tr>
+              </table>
+              <div class="buttons">
+                <g:buttonSubmit class="create" action="createNextGroup" value="Create Next Group ${nextGroupName}" />
+              </div>
+            </g:form>
+          </g:if>
+          <g:else>
+            <g:link controller="auth" action="login" params="${[targetUri: targetUri]}">
+              Login to enable Create Next Group.
+            </g:link>
+          </g:else>
         </li>
       </g:if>
     </ul>

@@ -22,14 +22,16 @@ class TaskController {
 
     def taskService
 
-    // the delete, save and update actions only accept POST requests
-    def static allowedMethods = [cancel:'POST']
+    static allowedMethods = [cancel: 'POST']
 
     def index = { redirect(action: 'list', params:params) }
 
     def list = {
-        Collection<Task> running = taskService.getRunning().reverse()
-        Collection<Task> completed = taskService.getCompleted().reverse()
+        Collection<Task> runningTasks = taskService.getAllRunning()
+        Collection<Task> completedTasks = taskService.getAllCompleted()
+
+        List<Task> running = runningTasks.sort { it.startTime }.reverse()
+        List<Task> completed = completedTasks.sort { it.updateTime }.reverse().take(100)
 
         String query = params.query ?: params.id
         if (query) {
@@ -47,22 +49,24 @@ class TaskController {
     }
 
     def show = {
-        String id = params.id
+        String id = params.id ?: params.runId
+        // TODO remove the params.runId when we are sure there are no longer workflow executions without a run ID
         Task task = taskService.getTaskById(id)
         if (!task) {
             Requests.renderNotFound('Task', id, this)
             return
         } else {
+            String updateTime = task.updateTime ? Time.format(task.updateTime) : ''
             withFormat {
                 html { return [ 'task' : task ] }
                 xml { new XML(task).render(response) }
                 json {
                     def simpleTask = [
-                            log:task.log,
+                            log: task.log,
                             status: task.status,
                             operation: task.operation,
                             durationString: task.durationString,
-                            updateTime: Time.format(task.updateTime)
+                            updateTime: updateTime
                     ]
                     render(simpleTask as JSON)
                 }
@@ -81,7 +85,6 @@ class TaskController {
             taskService.cancelTask(userContext, task)
             flash.message = "Task '${id}:${task.name}' canceled."
         }
-
         if (task.objectId && task.objectType) {
             redirect(controller: task.objectType.name(), action: 'show', params: [id: task.objectId])
         } else {
@@ -90,6 +93,6 @@ class TaskController {
     }
 
     def runningCount = {
-        render '' + taskService.getRunning().size()
+        render taskService.getRunningInMemory().size().toString()
     }
 }

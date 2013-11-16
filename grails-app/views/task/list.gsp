@@ -30,7 +30,7 @@
     <g:form method="post">
       <div class="list">
         <div class="buttons">
-          <g:buttonSubmit class="stop" onclick="return confirm('Really stop the selected task?');" action="cancel" value="Stop Selected Task"/>
+          <g:buttonSubmit class="stop" data-warning="Really stop the selected task?" action="cancel" value="Stop Selected Task"/>
         </div>
         <table class="sortable">
           <thead>
@@ -54,8 +54,10 @@
           <g:each var="rti" status="i" in="${runningTaskList}">
             <tr class="${(i % 2) == 0 ? 'odd' : 'even'}">
               <td><g:radio name="id" value="${rti.id}"/></td>
-              <td><g:link class="task" action="show" params="[id:rti.id]"
-                      title="Show details of this task">${rti.name}</g:link></td>
+              <td>
+                <g:link class="task" action="show" params="[id: rti.id]"
+                        title="Show details of this task">${rti.name}</g:link>
+              </td>
               <td>${rti.userContext?.region}</td>
               <td><g:formatDate date="${rti.startTime}"/></td>
               <td><g:formatDate date="${rti.updateTime}"/></td>
@@ -101,8 +103,10 @@
         <g:each var="cti" status="i" in="${completedTaskList}">
           <tr class="${(i % 2) == 0 ? 'odd' : 'even'}">
             <td><g:radio name="id" value="${cti.id}"/></td>
-            <td><g:link class="task" action="show" params="[id:cti.id]"
-                    title="Show details of this task">${cti.name}</g:link></td>
+            <td>
+              <g:link class="task" action="show" params="${cti.id ? [id: cti.id] : [runId: cti.workflowExecution.runId]}"
+                      title="Show details of this task">${cti.name}</g:link>
+            </td>
             <td>${cti.userContext?.region}</td>
             <td><g:formatDate date="${cti.startTime}"/></td>
             <td><g:formatDate date="${cti.updateTime}"/></td>

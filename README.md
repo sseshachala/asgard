@@ -2,6 +2,14 @@
 
 Asgard is a web-based tool for managing cloud-based applications and infrastructure.
 
+[![Build Status](https://netflixoss.ci.cloudbees.com/job/asgard-master/badge/icon)](https://netflixoss.ci.cloudbees.com/job/asgard-master/)
+
+## DOWNLOAD
+
+Grab the [latest binary release](http://netflix.box.com/asgard)
+
+(We are using Box to host binaries now, not GitHub.)
+
 ## DETAILS
 
 Please see the [wiki](https://github.com/Netflix/asgard/wiki).
@@ -22,3 +30,4 @@ Unless required by applicable law or agreed to in writing, software distributed 
 distributed on an “AS IS” BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or
 implied. See the License for the specific language governing permissions and limitations under the
 License.
+ 

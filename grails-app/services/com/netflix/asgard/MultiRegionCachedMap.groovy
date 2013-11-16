@@ -44,12 +44,12 @@ class MultiRegionCachedMap<T> implements Fillable {
      * @param keyer a closure containing the algorithm for extracting the map key from a T object
      * @param multiRegionRetriever a closure containing the algorithm for creating a new collection of T objects for a
      *          given region
-     * @param multiRegionCallback an optional closure to execute for each region after this cache has been filled useful
-     *          for starting another cache's refresh process
+     * @param multiRegionCallback an optional closure to execute for each region after this cache has been filled,
+     *          which can be useful for starting another cache's refresh process
      * @param multiRegionReadinessChecker an optional closure to determine whether or not external state is ready for
      *          each regional cached map to run its own fill algorithm
      */
-    void ensureSetUp(Closure multiRegionRetriever, Closure multiRegionCallback = {},
+    void ensureSetUp(Closure multiRegionRetriever, Closure multiRegionCallback = { },
                      Closure multiRegionReadinessChecker = { true }) {
         if (needsInitialization) {
             name = "Multi-region ${cachedMapBuilder.entityType.displayName}"
